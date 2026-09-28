@@ -1,0 +1,100 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg:#fff;--bg2:#f5f5f5;--fg:#111;--fg2:#666;--border:#e0e0e0;
+    --accent:#0066cc;--red:#cb2431;--radius:6px;
+    font-family:system-ui,-apple-system,sans-serif;font-size:13px;
+  }
+  :root.dark{--bg:#1e1e1e;--bg2:#2a2a2a;--fg:#e8e8e8;--fg2:#999;--border:#3a3a3a;--accent:#4d9fff;--red:#f85149;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--fg);padding:14px;}
+  h2{font-size:14px;font-weight:600;margin-bottom:12px;}
+  .field{margin-bottom:10px;}
+  label{display:block;font-size:11px;color:var(--fg2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px;}
+  input[type=text],select{
+    width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);
+    background:var(--bg);color:var(--fg);font-size:13px;font-family:inherit;outline:none;
+  }
+  input[type=text]:focus,select:focus{border-color:var(--accent);}
+  .hint{font-size:11px;color:var(--fg2);margin-top:3px;}
+  .actions{display:flex;gap:8px;margin-top:14px;}
+  .btn{padding:7px 16px;border:none;border-radius:var(--radius);font-size:13px;font-weight:500;cursor:pointer;}
+  .btn-primary{background:var(--accent);color:#fff;}
+  .btn-cancel{background:var(--bg2);color:var(--fg);border:1px solid var(--border);}
+  .btn:hover{opacity:0.85;}
+  .meta{font-size:11px;color:var(--fg2);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);}
+</style>
+
+<div id="root">
+  <h2>Clone VM</h2>
+  <div id="meta" class="meta"></div>
+  <div class="field">
+    <label>New VM ID *</label>
+    <input type="text" id="newid" />
+  </div>
+  <div class="field">
+    <label>New VM Name (optional)</label>
+    <input type="text" id="name" placeholder="Leave blank to use Proxmox default" />
+  </div>
+  <div class="field">
+    <label>Target Node</label>
+    <select id="target"></select>
+    <div class="hint">Select a node or keep "(same node)"</div>
+  </div>
+  <div class="field">
+    <label>Target Storage (optional)</label>
+    <input type="text" id="storage" placeholder="e.g. local-lvm" />
+    <div class="hint">Leave blank to use source VM's storage</div>
+  </div>
+  <div class="actions">
+    <button class="btn btn-cancel" id="cancel">Cancel</button>
+    <button class="btn btn-primary" id="submit">Clone VM</button>
+  </div>
+</div>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+const app = new App({ name: "CloneForm", version: "1.0.0" }, {}, { autoResize: true });
+
+let meta = {};
+
+app.ontoolresult = ({ content }) => {
+  let d;
+  try { d = JSON.parse(content[0].text); } catch { return; }
+  meta = d;
+  document.getElementById('meta').textContent = `Source: VM ${d.sourceVmid} on ${d.sourceNode} (${d.sourceName})`;
+  document.getElementById('newid').value = String(d.suggestedNewid || '');
+  const sel = document.getElementById('target');
+  sel.innerHTML = '<option value="">(same node)</option>' +
+    (d.nodes || []).map(n => `<option value="${n.node}">${n.node}</option>`).join('');
+};
+
+document.getElementById('cancel').onclick = () => {
+  app.updateModelContext({ role: 'user', content: [{ type: 'text', text: 'Clone cancelled' }] });
+};
+
+document.getElementById('submit').onclick = () => {
+  const newid = document.getElementById('newid').value.trim();
+  if (!newid) { document.getElementById('newid').style.borderColor = 'var(--red)'; return; }
+  const name = document.getElementById('name').value.trim();
+  const target = document.getElementById('target').value;
+  const storage = document.getElementById('storage').value.trim();
+
+  app.sendMessage({
+    role: 'user',
+    content: [{
+      type: 'text',
+      text: `Clone VM ${meta.sourceVmid} from ${meta.sourceNode} to new VMID ${newid}${name ? `, name="${name}"` : ''}${target ? `, target="${target}"` : ''}${storage ? `, storage="${storage}"` : ''}. Please call clone_vm_execute.`
+    }]
+  });
+};
+
+(async () => {
+  const ctx = await app.getHostContext();
+  if (ctx?.theme === 'dark') document.documentElement.classList.add('dark');
+  app.onhostcontextchanged = c => document.documentElement.classList.toggle('dark', c?.theme === 'dark');
+  await app.connect();
+})();
+</script>

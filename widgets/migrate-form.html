@@ -1,0 +1,221 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #ffffff; --bg2: #f5f5f5; --fg: #111111; --fg2: #555555;
+    --border: #e0e0e0; --accent: #0066cc; --green: #22863a;
+    --red: #cb2431; --yellow: #b08800; --radius: 6px;
+    font-family: system-ui, -apple-system, sans-serif; font-size: 13px;
+  }
+  :root.dark {
+    --bg: #1e1e1e; --bg2: #2a2a2a; --fg: #e8e8e8; --fg2: #999999;
+    --border: #3a3a3a; --accent: #4d9fff; --green: #3fb950;
+    --red: #f85149; --yellow: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--fg); padding: 14px; }
+  .vm-card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 10px 12px; margin-bottom: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  .vm-name { font-weight: 700; font-size: 14px; }
+  .vm-meta { font-size: 11px; color: var(--fg2); flex: 1; }
+  .badge {
+    font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 500;
+  }
+  .badge-running { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
+  .badge-stopped { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); }
+  .badge-other { background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); }
+  .section-label {
+    font-size: 10px; color: var(--fg2); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;
+  }
+  .node-list { margin-bottom: 14px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .node-row {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+    border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s;
+  }
+  .node-row:last-child { border-bottom: none; }
+  .node-row:hover { background: var(--bg2); }
+  .node-row.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .node-row input[type=radio] { flex-shrink: 0; cursor: pointer; }
+  .node-name { font-weight: 600; width: 110px; flex-shrink: 0; }
+  .mini-bars { display: flex; gap: 8px; flex: 1; align-items: center; }
+  .mini-bar-group { display: flex; align-items: center; gap: 4px; flex: 1; }
+  .mini-bar-label { font-size: 10px; color: var(--fg2); width: 28px; flex-shrink: 0; }
+  .mini-track { flex: 1; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .mini-fill { height: 100%; border-radius: 3px; }
+  .fill-ok { background: var(--green); }
+  .fill-warn { background: var(--yellow); }
+  .fill-crit { background: var(--red); }
+  .mini-pct { font-size: 10px; color: var(--fg2); width: 28px; text-align: right; flex-shrink: 0; }
+  .mode-section { margin-bottom: 14px; }
+  .mode-opt { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; }
+  .mode-opt input { cursor: pointer; }
+  .mode-label { font-size: 12px; }
+  .mode-sub { font-size: 11px; color: var(--fg2); }
+  .local-disks {
+    display: flex; align-items: center; gap: 8px; padding: 6px 0 0 22px;
+    font-size: 12px; cursor: pointer;
+  }
+  .local-disks input { cursor: pointer; }
+  .actions { display: flex; gap: 8px; padding-top: 4px; }
+  button {
+    padding: 7px 16px; border-radius: var(--radius); border: 1px solid var(--border);
+    background: var(--bg2); color: var(--fg); font-size: 12px; cursor: pointer; font-weight: 500;
+  }
+  button:hover { background: var(--border); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .no-nodes { padding: 16px; text-align: center; color: var(--fg2); font-size: 12px; }
+</style>
+
+<div id="root"><div style="padding:20px;text-align:center;color:var(--fg2)">Loading migration form…</div></div>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+const app = new App({ name: "MigrateForm", version: "1.0.0" }, {}, { autoResize: true });
+
+function pct(used, max) { return max ? Math.round(used / max * 100) : 0; }
+function fillCls(p) { return p > 80 ? 'fill-crit' : p > 50 ? 'fill-warn' : 'fill-ok'; }
+
+let formData = null;
+
+function getSelections() {
+  const nodeEl = document.querySelector('input[name=target-node]:checked');
+  const modeEl = document.querySelector('input[name=mode]:checked');
+  const ldEl = document.getElementById('with-local-disks');
+  return {
+    selectedNode: nodeEl?.value || null,
+    online: modeEl?.value === 'online',
+    withLocalDisks: ldEl?.checked || false,
+  };
+}
+
+function updateLocalDisksVisibility() {
+  const ld = document.getElementById('ld-wrap');
+  if (!ld || !formData) return;
+  const { online } = getSelections();
+  ld.style.display = (formData.type === 'qemu' && online) ? 'flex' : 'none';
+}
+
+function updateConfirmButton() {
+  const btn = document.getElementById('btn-confirm');
+  if (!btn) return;
+  const { selectedNode } = getSelections();
+  btn.disabled = !selectedNode;
+}
+
+function render(d) {
+  formData = d;
+  const { vmid, sourceNode, type, name, vmStatus, targetNodes } = d;
+  const stBadge = vmStatus === 'running' ? 'badge-running' : vmStatus === 'stopped' ? 'badge-stopped' : 'badge-other';
+
+  document.getElementById('root').innerHTML = `
+    <div class="vm-card">
+      <div>
+        <div class="vm-name">${name}</div>
+        <div class="vm-meta">VM ${vmid} · from ${sourceNode}</div>
+      </div>
+      <div class="badge ${stBadge}">${vmStatus || 'unknown'}</div>
+    </div>
+
+    <div class="section-label">Target Node</div>
+    <div class="node-list">
+      ${!targetNodes || !targetNodes.length
+        ? `<div class="no-nodes">No available target nodes</div>`
+        : targetNodes.map(n => {
+            const cpuPct = Math.round((n.cpu || 0) * 100);
+            const ramPct = pct(n.mem, n.maxmem);
+            return `<label class="node-row">
+              <input type="radio" name="target-node" value="${n.node}" />
+              <span class="node-name">${n.node}</span>
+              <div class="mini-bars">
+                <div class="mini-bar-group">
+                  <span class="mini-bar-label">CPU</span>
+                  <div class="mini-track"><div class="mini-fill fill-ok" style="width:${cpuPct}%"></div></div>
+                  <span class="mini-pct">${cpuPct}%</span>
+                </div>
+                <div class="mini-bar-group">
+                  <span class="mini-bar-label">RAM</span>
+                  <div class="mini-track"><div class="mini-fill ${fillCls(ramPct)}" style="width:${ramPct}%"></div></div>
+                  <span class="mini-pct">${ramPct}%</span>
+                </div>
+              </div>
+            </label>`;
+          }).join('')}
+    </div>
+
+    <div class="mode-section">
+      <div class="section-label">Migration Mode</div>
+      <label class="mode-opt">
+        <input type="radio" name="mode" value="offline" checked />
+        <div><div class="mode-label">Offline (requires downtime)</div><div class="mode-sub">VM is paused during migration</div></div>
+      </label>
+      <label class="mode-opt">
+        <input type="radio" name="mode" value="online" />
+        <div><div class="mode-label">Online (live, no downtime)</div><div class="mode-sub">VM continues running — requires shared storage or local disk migration</div></div>
+      </label>
+      <div id="ld-wrap" class="local-disks" style="display:none">
+        <input type="checkbox" id="with-local-disks" />
+        <label for="with-local-disks">Migrate local disks (required for online with local storage)</label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="btn-confirm" disabled>Confirm Migration</button>
+      <button id="btn-cancel">Cancel</button>
+    </div>`;
+
+  // Event listeners
+  document.querySelectorAll('input[name=target-node]').forEach(r => {
+    r.addEventListener('change', () => {
+      document.querySelectorAll('.node-row').forEach(row => row.classList.remove('selected'));
+      r.closest('.node-row')?.classList.add('selected');
+      updateConfirmButton();
+    });
+  });
+
+  document.querySelectorAll('input[name=mode]').forEach(r => {
+    r.addEventListener('change', updateLocalDisksVisibility);
+  });
+
+  document.getElementById('btn-confirm').addEventListener('click', () => {
+    const { selectedNode, online, withLocalDisks } = getSelections();
+    if (!selectedNode) return;
+    const mode = online ? 'online' : 'offline';
+    const ldStr = (online && withLocalDisks) ? ', with local disks' : '';
+    app.sendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: `Migrate VM ${vmid} (${name}) from ${sourceNode} to ${selectedNode} — mode: ${mode}${ldStr}` }]
+    });
+  });
+
+  document.getElementById('btn-cancel').addEventListener('click', () => {
+    app.sendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: 'Migration cancelled' }]
+    });
+  });
+
+  updateLocalDisksVisibility();
+  updateConfirmButton();
+}
+
+app.ontoolresult = ({ content }) => {
+  try {
+    render(JSON.parse(content[0].text));
+  } catch {
+    document.getElementById('root').innerHTML = '<div style="padding:20px;text-align:center;color:var(--fg2)">Failed to load migration form</div>';
+  }
+};
+
+(async () => {
+  const ctx = await app.getHostContext();
+  if (ctx?.theme === 'dark') document.documentElement.classList.add('dark');
+  app.onhostcontextchanged = c => document.documentElement.classList.toggle('dark', c?.theme === 'dark');
+  await app.connect();
+})();
+</script>

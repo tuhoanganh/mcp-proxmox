@@ -1,0 +1,170 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #ffffff; --bg2: #f5f5f5; --fg: #111111; --fg2: #555555;
+    --border: #e0e0e0; --accent: #0066cc; --green: #22863a;
+    --red: #cb2431; --yellow: #b08800; --radius: 6px;
+    font-family: system-ui, -apple-system, sans-serif; font-size: 13px;
+  }
+  :root.dark {
+    --bg: #1e1e1e; --bg2: #2a2a2a; --fg: #e8e8e8; --fg2: #999999;
+    --border: #3a3a3a; --accent: #4d9fff; --green: #3fb950;
+    --red: #f85149; --yellow: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--fg); }
+  .toolbar {
+    display: flex; gap: 6px; padding: 8px;
+    border-bottom: 1px solid var(--border); background: var(--bg2);
+    position: sticky; top: 0;
+  }
+  input[type=search] {
+    flex: 1; padding: 5px 8px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--bg); color: var(--fg);
+    font-size: 12px; outline: none;
+  }
+  input[type=search]:focus { border-color: var(--accent); }
+  select {
+    padding: 5px 6px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg); color: var(--fg); font-size: 12px; cursor: pointer;
+  }
+  .list { max-height: 360px; overflow-y: auto; }
+  .row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background 0.1s;
+  }
+  .row:hover { background: var(--bg2); }
+  .vmid { color: var(--fg2); font-size: 11px; width: 36px; flex-shrink: 0; }
+  .name { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node { color: var(--fg2); font-size: 11px; }
+  .type-badge {
+    font-size: 10px; padding: 1px 5px; border-radius: 3px;
+    background: var(--bg2); color: var(--fg2); border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .status-running { background: var(--green); }
+  .status-stopped { background: var(--red); }
+  .status-paused, .status-suspended { background: var(--yellow); }
+  .empty { padding: 24px; text-align: center; color: var(--fg2); }
+  .count { padding: 4px 10px; font-size: 11px; color: var(--fg2); }
+</style>
+
+<div class="toolbar">
+  <input type="search" id="q" placeholder="Search by name or VMID…" />
+  <select id="filter-status">
+    <option value="">All status</option>
+    <option value="running">Running</option>
+    <option value="stopped">Stopped</option>
+  </select>
+  <select id="filter-node">
+    <option value="">All nodes</option>
+  </select>
+  <select id="filter-type">
+    <option value="">All types</option>
+    <option value="qemu">VM</option>
+    <option value="lxc">CT</option>
+  </select>
+  <select id="filter-pool">
+    <option value="">All pools</option>
+  </select>
+</div>
+<div id="count" class="count"></div>
+<div class="list" id="list"></div>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+
+const app = new App({ name: "VMPicker", version: "1.0.0" }, {}, { autoResize: true });
+let allVms = [];
+
+function fmt(bytes) {
+  if (!bytes) return '';
+  const gb = bytes / 1024 / 1024 / 1024;
+  return gb >= 1 ? gb.toFixed(1) + 'G' : (bytes / 1024 / 1024).toFixed(0) + 'M';
+}
+
+function render() {
+  const q = document.getElementById('q').value.toLowerCase();
+  const st = document.getElementById('filter-status').value;
+  const ty = document.getElementById('filter-type').value;
+  const list = document.getElementById('list');
+  const count = document.getElementById('count');
+
+  const nd = document.getElementById('filter-node').value;
+  const pl = document.getElementById('filter-pool').value;
+
+  const filtered = allVms.filter(v => {
+    if (q && !String(v.vmid).includes(q) && !(v.name || '').toLowerCase().includes(q)) return false;
+    if (st && v.status !== st) return false;
+    if (ty && v.type !== ty) return false;
+    if (nd && v.node !== nd) return false;
+    if (pl && v.pool !== pl) return false;
+    return true;
+  });
+
+  count.textContent = `${filtered.length} of ${allVms.length} VMs/CTs`;
+
+  if (!filtered.length) {
+    list.innerHTML = '<div class="empty">No VMs match the filter</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(v => `
+    <div class="row" data-vmid="${v.vmid}" data-node="${v.node}" data-type="${v.type}" data-name="${v.name || v.vmid}">
+      <div class="status-dot status-${v.status}"></div>
+      <div class="vmid">${v.vmid}</div>
+      <div class="name">${v.name || '(unnamed)'}</div>
+      <div class="node">${v.node}</div>
+      ${v.pool ? `<div class="node" style="color:var(--accent);font-size:10px">${v.pool}</div>` : ''}
+      <div class="type-badge">${v.type === 'qemu' ? 'VM' : 'CT'}</div>
+    </div>
+  `).join('');
+
+  list.querySelectorAll('.row').forEach(row => {
+    row.addEventListener('click', () => {
+      const { vmid, node, type, name } = row.dataset;
+      app.sendMessage({
+        role: 'user',
+        content: [{ type: 'text', text: `Selected VM: ${vmid} (${name}) — node: ${node}, type: ${type}` }]
+      });
+    });
+  });
+}
+
+app.ontoolresult = ({ content }) => {
+  try {
+    const raw = JSON.parse(content[0].text);
+    allVms = Array.isArray(raw) ? raw : (raw.vms || raw);
+
+    // Populate node filter
+    const nodeSet = new Set(allVms.map(v => v.node).filter(Boolean));
+    const nodeSelect = document.getElementById('filter-node');
+    nodeSelect.innerHTML = '<option value="">All nodes</option>' +
+      [...nodeSet].sort().map(n => `<option value="${n}">${n}</option>`).join('');
+
+    render();
+  } catch {
+    document.getElementById('list').innerHTML = '<div class="empty">Failed to load VM list</div>';
+  }
+};
+
+document.getElementById('q').addEventListener('input', render);
+document.getElementById('filter-status').addEventListener('change', render);
+document.getElementById('filter-node').addEventListener('change', render);
+document.getElementById('filter-type').addEventListener('change', render);
+document.getElementById('filter-pool').addEventListener('change', render);
+
+(async () => {
+  const ctx = await app.getHostContext();
+  if (ctx?.theme === 'dark') document.documentElement.classList.add('dark');
+  app.onhostcontextchanged = c => {
+    document.documentElement.classList.toggle('dark', c?.theme === 'dark');
+  };
+  await app.connect();
+})();
+</script>

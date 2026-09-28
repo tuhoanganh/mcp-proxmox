@@ -1,0 +1,202 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #ffffff; --bg2: #f5f5f5; --fg: #111111; --fg2: #555555;
+    --border: #e0e0e0; --accent: #0066cc; --green: #22863a;
+    --red: #cb2431; --yellow: #b08800; --radius: 6px;
+    font-family: system-ui, -apple-system, sans-serif; font-size: 13px;
+  }
+  :root.dark {
+    --bg: #1e1e1e; --bg2: #2a2a2a; --fg: #e8e8e8; --fg2: #999999;
+    --border: #3a3a3a; --accent: #4d9fff; --green: #3fb950;
+    --red: #f85149; --yellow: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--fg); padding: 12px; }
+  .header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .vm-name { font-size: 16px; font-weight: 700; flex: 1; }
+  .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; flex-shrink: 0;
+  }
+  .badge-running { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
+  .badge-stopped { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); }
+  .badge-other { background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); }
+  .badge-pool { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-size: 10px; }
+  .meta { font-size: 11px; color: var(--fg2); }
+  .resources { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+  .res-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; }
+  .res-label { font-size: 10px; color: var(--fg2); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+  .res-value { font-size: 17px; font-weight: 700; }
+  .res-sub { font-size: 10px; color: var(--fg2); margin-top: 2px; }
+  .bar-track { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .bar-fill { height: 100%; border-radius: 3px; background: var(--accent); }
+  .bar-fill.warn { background: var(--yellow); }
+  .bar-fill.crit { background: var(--red); }
+  .section-title {
+    font-size: 10px; color: var(--fg2); text-transform: uppercase; letter-spacing: 0.05em;
+    margin-bottom: 6px; display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+  }
+  .section-title .toggle { font-size: 12px; }
+  .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-bottom: 12px; }
+  .config-item { display: flex; gap: 6px; padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 11px; min-width: 0; }
+  .config-key { color: var(--fg2); flex-shrink: 0; min-width: 80px; }
+  .config-val { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-size: 10px; }
+  .actions { display: flex; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+  button {
+    padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--border);
+    background: var(--bg2); color: var(--fg); font-size: 12px; cursor: pointer;
+  }
+  button:hover { background: var(--border); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { opacity: 0.85; }
+  .loading { padding: 20px; text-align: center; color: var(--fg2); }
+</style>
+
+<div id="root"><div class="loading">Loading VM details…</div></div>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+const app = new App({ name: "VMDetail", version: "1.0.0" }, {}, { autoResize: true });
+
+function fmtBytes(b) {
+  if (!b) return '0';
+  const g = b / 1073741824;
+  return g >= 1 ? g.toFixed(1) + 'G' : (b / 1048576).toFixed(0) + 'M';
+}
+function fmtUptime(s) {
+  if (!s) return '—';
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d ? `${d}d ${h}h ${m}m` : h ? `${h}h ${m}m` : `${m}m`;
+}
+function pct(used, max) { return max ? Math.round(used / max * 100) : 0; }
+function barCls(p) { return p > 80 ? 'bar-fill crit' : p > 50 ? 'bar-fill warn' : 'bar-fill'; }
+
+let configOpen = true;
+let vmData = null;
+
+function renderConfig(config) {
+  const skip = new Set(['digest', 'vmgenid', 'smbios1']);
+  const items = [];
+  const keys = Object.keys(config).sort();
+  for (const k of keys) {
+    if (skip.has(k)) continue;
+    const v = String(config[k] ?? '');
+    // Network interfaces
+    if (/^net\d+$/.test(k)) {
+      const idx = k.replace('net', '');
+      const parts = v.split(',');
+      const bridge = parts.find(p => p.startsWith('bridge='))?.split('=')[1] ?? '?';
+      const mac = parts[0]?.split('=')[1] ?? parts[0];
+      items.push([`Network ${idx}`, `${bridge} — ${mac}`]);
+    // Disk interfaces
+    } else if (/^(scsi|ide|virtio|sata)\d+$/.test(k)) {
+      items.push([`Disk (${k})`, v]);
+    } else {
+      items.push([k, v]);
+    }
+  }
+  if (!items.length) return '<div style="color:var(--fg2);font-size:11px">No config</div>';
+  return items.map(([k, v]) => `
+    <div class="config-item">
+      <span class="config-key">${k}</span>
+      <span class="config-val" title="${v}">${v}</span>
+    </div>`).join('');
+}
+
+function render(d) {
+  vmData = d;
+  const { vmid, node, type, pool, status, config } = d;
+  const name = config?.name || status?.name || String(vmid);
+  const st = status?.status || 'unknown';
+  const stBadge = st === 'running' ? 'badge-running' : st === 'stopped' ? 'badge-stopped' : 'badge-other';
+
+  const cpuPct = status ? Math.round((status.cpu || 0) * 100) : 0;
+  const ramPct = pct(status?.mem, status?.maxmem);
+  const diskPct = pct(status?.disk, status?.maxdisk);
+
+  document.getElementById('root').innerHTML = `
+    <div class="header">
+      <div class="vm-name">${name}</div>
+      <div class="badge ${stBadge}">${st}</div>
+      ${pool ? `<div class="badge badge-pool">${pool}</div>` : ''}
+      <div class="meta">${node} · VM ${vmid} · up ${fmtUptime(status?.uptime)}</div>
+    </div>
+
+    <div class="resources">
+      <div class="res-card">
+        <div class="res-label">CPU</div>
+        <div class="res-value">${cpuPct}%</div>
+        <div class="res-sub">${status?.cpus ?? config?.cores ?? '?'} vCPUs</div>
+        <div class="bar-track"><div class="${barCls(cpuPct)}" style="width:${cpuPct}%"></div></div>
+      </div>
+      <div class="res-card">
+        <div class="res-label">RAM</div>
+        <div class="res-value">${ramPct}%</div>
+        <div class="res-sub">${fmtBytes(status?.mem)} / ${fmtBytes(status?.maxmem)}</div>
+        <div class="bar-track"><div class="${barCls(ramPct)}" style="width:${ramPct}%"></div></div>
+      </div>
+      <div class="res-card">
+        <div class="res-label">Disk</div>
+        <div class="res-value">${diskPct}%</div>
+        <div class="res-sub">${fmtBytes(status?.disk)} / ${fmtBytes(status?.maxdisk)}</div>
+        <div class="bar-track"><div class="${barCls(diskPct)}" style="width:${diskPct}%"></div></div>
+      </div>
+      <div class="res-card">
+        <div class="res-label">Network</div>
+        <div class="res-value" style="font-size:12px">↑ ${fmtBytes(status?.netout)}</div>
+        <div class="res-sub">↓ ${fmtBytes(status?.netin)} in</div>
+      </div>
+    </div>
+
+    <div class="section-title" id="config-toggle">
+      <span class="toggle">${configOpen ? '▾' : '▸'}</span>
+      Configuration
+    </div>
+    <div class="config-grid" id="config-section" style="display:${configOpen ? 'grid' : 'none'}">
+      ${renderConfig(config || {})}
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="btn-migrate">Migrate</button>
+      <button id="btn-refresh">Refresh</button>
+    </div>`;
+
+  document.getElementById('config-toggle').addEventListener('click', () => {
+    configOpen = !configOpen;
+    document.querySelector('#config-toggle .toggle').textContent = configOpen ? '▾' : '▸';
+    document.getElementById('config-section').style.display = configOpen ? 'grid' : 'none';
+  });
+
+  document.getElementById('btn-migrate').addEventListener('click', () => {
+    app.sendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: `Migrate VM ${vmid} (${name}) from ${node}` }]
+    });
+  });
+
+  document.getElementById('btn-refresh').addEventListener('click', () => {
+    app.sendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: `Get VM detail for vmid ${vmid} on node ${node}` }]
+    });
+  });
+}
+
+app.ontoolresult = ({ content }) => {
+  try {
+    render(JSON.parse(content[0].text));
+  } catch {
+    document.getElementById('root').innerHTML = '<div class="loading">Failed to load VM details</div>';
+  }
+};
+
+(async () => {
+  const ctx = await app.getHostContext();
+  if (ctx?.theme === 'dark') document.documentElement.classList.add('dark');
+  app.onhostcontextchanged = c => document.documentElement.classList.toggle('dark', c?.theme === 'dark');
+  await app.connect();
+})();
+</script>

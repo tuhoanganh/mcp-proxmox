@@ -1,0 +1,88 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg:#fff;--bg2:#f5f5f5;--fg:#111;--fg2:#666;--border:#e0e0e0;
+    --green:#2da44e;--red:#cf222e;--yellow:#bf8700;--blue:#0066cc;
+    font-family:system-ui,-apple-system,sans-serif;font-size:12px;
+  }
+  :root.dark{--bg:#1e1e1e;--bg2:#2a2a2a;--fg:#e8e8e8;--fg2:#999;--border:#3a3a3a;--green:#3fb950;--red:#f85149;--yellow:#d29922;--blue:#4d9fff;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--fg);}
+  .header{padding:7px 10px;background:var(--bg2);border-bottom:1px solid var(--border);font-weight:600;display:flex;align-items:center;gap:8px;}
+  .count{font-size:11px;color:var(--fg2);font-weight:400;}
+  table{width:100%;border-collapse:collapse;}
+  th{padding:5px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:0.04em;color:var(--fg2);border-bottom:1px solid var(--border);background:var(--bg2);}
+  td{padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:middle;}
+  .mono{font-family:monospace;font-size:11px;}
+  .badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:20px;font-weight:500;}
+  .ok{background:color-mix(in srgb,var(--green) 15%,transparent);color:var(--green);}
+  .err{background:color-mix(in srgb,var(--red) 15%,transparent);color:var(--red);}
+  .run{background:color-mix(in srgb,var(--blue) 15%,transparent);color:var(--blue);}
+  .stop{background:color-mix(in srgb,var(--yellow) 15%,transparent);color:var(--yellow);}
+  .list{max-height:380px;overflow-y:auto;}
+  .empty{padding:20px;text-align:center;color:var(--fg2);}
+  .type-chip{font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg2);color:var(--fg2);border:1px solid var(--border);}
+</style>
+
+<div class="header">
+  Recent Tasks <span class="count" id="cnt"></span>
+</div>
+<div class="list">
+  <table>
+    <thead>
+      <tr>
+        <th>Type</th><th>Status</th><th>Node</th><th>User</th><th>Started</th><th>Duration</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+const app = new App({ name: "Tasks", version: "1.0.0" }, {}, { autoResize: true });
+
+function fmtTime(ts) { return ts ? new Date(ts * 1000).toLocaleTimeString() : ''; }
+function fmtDur(s, e) {
+  if (!e) return 'running';
+  const d = e - s;
+  return d < 60 ? `${d}s` : `${Math.floor(d/60)}m ${d%60}s`;
+}
+function statusClass(s) {
+  if (!s || s === 'running') return 'run';
+  if (s === 'OK') return 'ok';
+  if (s.startsWith('WARNINGS')) return 'stop';
+  return 'err';
+}
+
+app.ontoolresult = ({ content }) => {
+  let tasks;
+  try { tasks = JSON.parse(content[0].text); } catch { return; }
+  const tbody = document.getElementById('tbody');
+  document.getElementById('cnt').textContent = `${tasks.length} tasks`;
+
+  if (!tasks.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No tasks found</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = tasks.map(t => `
+    <tr>
+      <td><span class="type-chip">${t.type}</span></td>
+      <td><span class="badge ${statusClass(t.status)}">${t.status || 'running'}</span></td>
+      <td>${t.node}</td>
+      <td class="mono">${t.user}</td>
+      <td>${fmtTime(t.starttime)}</td>
+      <td>${fmtDur(t.starttime, t.endtime)}</td>
+    </tr>`).join('');
+};
+
+(async () => {
+  const ctx = await app.getHostContext();
+  if (ctx?.theme === 'dark') document.documentElement.classList.add('dark');
+  app.onhostcontextchanged = c => document.documentElement.classList.toggle('dark', c?.theme === 'dark');
+  await app.connect();
+})();
+</script>

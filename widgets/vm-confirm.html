@@ -1,0 +1,116 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg: #ffffff; --bg2: #f5f5f5; --fg: #111111; --fg2: #666666;
+    --border: #e0e0e0; --green: #1a7f37; --red: #cf222e; --yellow: #9a6700;
+    --btn-green: #2da44e; --btn-red: #cf222e; --btn-yellow: #bf8700;
+    font-family: system-ui, -apple-system, sans-serif; font-size: 13px;
+  }
+  :root.dark {
+    --bg: #1e1e1e; --bg2: #2a2a2a; --fg: #e8e8e8; --fg2: #999999;
+    --border: #3a3a3a; --green: #3fb950; --red: #f85149; --yellow: #d29922;
+    --btn-green: #238636; --btn-red: #da3633; --btn-yellow: #9e6a03;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--fg); padding: 16px; }
+  .card {
+    border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  }
+  .card-header {
+    padding: 10px 14px; background: var(--bg2);
+    border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px;
+  }
+  .card-body { padding: 14px; }
+  .detail { margin-bottom: 10px; }
+  .detail label { display: block; font-size: 11px; color: var(--fg2); margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .detail span { font-weight: 500; }
+  .warning {
+    margin: 12px 0; padding: 8px 12px;
+    border-left: 3px solid var(--red); background: color-mix(in srgb, var(--red) 8%, var(--bg));
+    border-radius: 0 4px 4px 0; font-size: 12px; color: var(--fg);
+  }
+  .actions { display: flex; gap: 8px; margin-top: 14px; }
+  .btn {
+    padding: 7px 16px; border: none; border-radius: 6px; font-size: 13px;
+    font-weight: 500; cursor: pointer; transition: opacity 0.1s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn-cancel { background: var(--bg2); color: var(--fg); border: 1px solid var(--border); }
+  .btn-danger { background: var(--btn-red); color: #fff; }
+  .btn-warn { background: var(--btn-yellow); color: #fff; }
+  .btn-safe { background: var(--btn-green); color: #fff; }
+  .pending { color: var(--fg2); font-style: italic; }
+</style>
+
+<div id="root"><div class="pending">Loading…</div></div>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+const app = new App({ name: "VMConfirm", version: "1.0.0" }, {}, { autoResize: true });
+
+const DANGER = new Set(['delete', 'reset', 'rollback']);
+const WARN   = new Set(['stop', 'shutdown', 'suspend']);
+const SAFE   = new Set(['start', 'reboot', 'resume']);
+
+const LABELS = {
+  start: 'Start VM', stop: 'Stop VM', reboot: 'Reboot VM',
+  shutdown: 'Shutdown VM', reset: 'Reset VM', suspend: 'Suspend VM',
+  resume: 'Resume VM', delete: 'Delete VM', rollback: 'Rollback Snapshot',
+};
+
+const WARNINGS = {
+  delete: 'This will permanently delete the VM and all its local disks. This cannot be undone.',
+  reset: 'This is equivalent to pulling the power plug. Any unsaved data will be lost.',
+  rollback: 'All changes since the snapshot will be discarded. This cannot be undone.',
+};
+
+app.ontoolresult = ({ content }) => {
+  const root = document.getElementById('root');
+  let data;
+  try { data = JSON.parse(content[0].text); } catch { root.innerHTML = '<div class="pending">Invalid payload</div>'; return; }
+
+  const { vmid, node, type, action, name, snapname } = data;
+  const label = LABELS[action] ?? action;
+  const btnClass = DANGER.has(action) ? 'btn-danger' : WARN.has(action) ? 'btn-warn' : 'btn-safe';
+  const warning = WARNINGS[action] ?? '';
+
+  root.innerHTML = `
+    <div class="card">
+      <div class="card-header">${label}</div>
+      <div class="card-body">
+        <div class="detail"><label>VM / CT</label><span>${name} (${vmid})</span></div>
+        <div class="detail"><label>Node</label><span>${node}</span></div>
+        <div class="detail"><label>Type</label><span>${type === 'qemu' ? 'Virtual Machine' : 'Container'}</span></div>
+        ${snapname ? `<div class="detail"><label>Snapshot</label><span>${snapname}</span></div>` : ''}
+        ${warning ? `<div class="warning">${warning}</div>` : ''}
+        <div class="actions">
+          <button class="btn btn-cancel" id="cancel">Cancel</button>
+          <button class="btn ${btnClass}" id="confirm">${label}</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.getElementById('cancel').onclick = () => {
+    app.updateModelContext({ role: 'user', content: [{ type: 'text', text: `Cancelled ${label} for VM ${vmid}` }] });
+  };
+
+  document.getElementById('confirm').onclick = () => {
+    if (action === 'rollback') {
+      app.sendMessage({ role: 'user', content: [{ type: 'text', text: `Confirmed rollback of VM ${vmid} (${name}) on ${node} to snapshot '${snapname}'. Please call rollback_snapshot_execute.` }] });
+    } else if (action === 'delete') {
+      app.sendMessage({ role: 'user', content: [{ type: 'text', text: `Confirmed delete VM ${vmid} (${name}) on ${node} (type: ${type}). Please call vm_action_execute.` }] });
+    } else {
+      app.sendMessage({ role: 'user', content: [{ type: 'text', text: `Confirmed action '${action}' for VM ${vmid} (${name}) on ${node} (type: ${type}). Please call vm_action_execute.` }] });
+    }
+  };
+};
+
+(async () => {
+  const ctx = await app.getHostContext();
+  if (ctx?.theme === 'dark') document.documentElement.classList.add('dark');
+  app.onhostcontextchanged = c => document.documentElement.classList.toggle('dark', c?.theme === 'dark');
+  await app.connect();
+})();
+</script>

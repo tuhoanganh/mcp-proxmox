@@ -1,0 +1,187 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg: #fff; --bg2: #f5f5f5; --fg: #111; --fg2: #666;
+    --border: #e0e0e0; --green: #2da44e; --red: #cf222e; --yellow: #bf8700;
+    --bar-bg: #e0e0e0; --bar-cpu: #0066cc; --bar-mem: #8250df; --bar-disk: #bf8700;
+    font-family: system-ui, -apple-system, sans-serif; font-size: 12px;
+  }
+  :root.dark {
+    --bg: #1e1e1e; --bg2: #2a2a2a; --fg: #e8e8e8; --fg2: #999;
+    --border: #3a3a3a; --green: #3fb950; --red: #f85149; --yellow: #d29922;
+    --bar-bg: #3a3a3a; --bar-cpu: #4d9fff; --bar-mem: #a371f7; --bar-disk: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--fg); padding: 10px; }
+  .summary {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px;
+  }
+  .stat { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .stat-label { color: var(--fg2); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-value { font-size: 18px; font-weight: 700; margin-top: 2px; }
+  .stat-sub { font-size: 10px; color: var(--fg2); margin-top: 1px; }
+  h3 { font-size: 11px; color: var(--fg2); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+  .node-card {
+    border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px;
+    margin-bottom: 8px; background: var(--bg2);
+  }
+  .node-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .node-name { font-weight: 600; flex: 1; }
+  .badge {
+    font-size: 10px; padding: 1px 6px; border-radius: 20px; font-weight: 500;
+  }
+  .badge-online { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
+  .badge-offline { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); }
+  .bars { display: flex; flex-direction: column; gap: 5px; }
+  .bar-row { display: flex; align-items: center; gap: 6px; }
+  .bar-label { width: 32px; color: var(--fg2); font-size: 10px; }
+  .bar-track { flex: 1; height: 6px; background: var(--bar-bg); border-radius: 3px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; }
+  .bar-pct { width: 36px; text-align: right; color: var(--fg2); font-size: 10px; }
+  .cpu-fill { background: var(--bar-cpu); }
+  .mem-fill { background: var(--bar-mem); }
+  .disk-fill { background: var(--bar-disk); }
+  .loading { padding: 20px; text-align: center; color: var(--fg2); }
+  .tabs { display: flex; gap: 4px; margin: 12px 0 8px; }
+  .tab {
+    padding: 5px 12px; border-radius: var(--radius); border: 1px solid var(--border);
+    background: var(--bg2); color: var(--fg2); font-size: 11px; cursor: pointer;
+  }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .top-vm-row {
+    display: flex; align-items: center; gap: 8px; padding: 6px 0;
+    border-bottom: 1px solid var(--border); cursor: pointer;
+  }
+  .top-vm-row:hover { color: var(--accent); }
+  .top-vm-name { flex: 1; font-weight: 500; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .top-vm-node { color: var(--fg2); font-size: 10px; width: 80px; flex-shrink: 0; text-align: right; }
+  .top-bar-wrap { display: flex; align-items: center; gap: 4px; width: 100px; flex-shrink: 0; }
+  .top-bar-track { flex: 1; height: 5px; background: var(--bar-bg); border-radius: 3px; overflow: hidden; }
+  .top-bar-fill { height: 100%; border-radius: 3px; }
+  .mem-fill { background: var(--bar-mem); }
+  .cpu-fill { background: var(--bar-cpu); }
+  .disk-fill { background: var(--bar-disk); }
+  .top-val { font-size: 10px; color: var(--fg2); width: 36px; text-align: right; flex-shrink: 0; }
+</style>
+
+<div id="root"><div class="loading">Loading cluster status…</div></div>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+const app = new App({ name: "ClusterStatus", version: "1.0.0" }, {}, { autoResize: true });
+
+function pct(used, max) { return max ? Math.round(used / max * 100) : 0; }
+function fmtBytes(b) {
+  if (!b) return '0';
+  const t = b / 1099511627776, g = b / 1073741824;
+  return t >= 1 ? t.toFixed(1) + 'T' : g >= 1 ? g.toFixed(1) + 'G' : (b / 1048576).toFixed(0) + 'M';
+}
+function bar(cls, used, max) {
+  const p = pct(used, max);
+  return `<div class="bar-row">
+    <div class="bar-label">${cls.replace('-fill','').replace('cpu','CPU').replace('mem','RAM').replace('disk','Disk')}</div>
+    <div class="bar-track"><div class="bar-fill ${cls}" style="width:${p}%"></div></div>
+    <div class="bar-pct">${p}%</div>
+  </div>`;
+}
+
+app.ontoolresult = ({ content }) => {
+  let d;
+  try { d = JSON.parse(content[0].text); } catch { document.getElementById('root').textContent = 'Failed to parse data'; return; }
+
+  const { nodes, vmCount, runningCount, totals, topVMs } = d;
+  const onlineCount = nodes.filter(n => n.status === 'online').length;
+
+  document.getElementById('root').innerHTML = `
+    <div class="summary">
+      <div class="stat"><div class="stat-label">Nodes</div><div class="stat-value">${onlineCount}/${nodes.length}</div><div class="stat-sub">online</div></div>
+      <div class="stat"><div class="stat-label">VMs/CTs</div><div class="stat-value">${runningCount}</div><div class="stat-sub">of ${vmCount} running</div></div>
+      <div class="stat"><div class="stat-label">Cluster RAM</div><div class="stat-value">${pct(totals.usedMem, totals.mem)}%</div><div class="stat-sub">${fmtBytes(totals.usedMem)} / ${fmtBytes(totals.mem)}</div></div>
+      <div class="stat"><div class="stat-label">Cluster Disk</div><div class="stat-value">${pct(totals.usedDisk, totals.disk)}%</div><div class="stat-sub">${fmtBytes(totals.usedDisk)} / ${fmtBytes(totals.disk)}</div></div>
+    </div>
+    <h3>Nodes</h3>
+    ${nodes.map(n => `
+      <div class="node-card">
+        <div class="node-header">
+          <div class="node-name">${n.node}</div>
+          <div class="badge badge-${n.status}">${n.status}</div>
+          <div style="color:var(--fg2);font-size:11px">${n.maxcpu} CPU</div>
+        </div>
+        <div class="bars">
+          ${bar('cpu-fill', Math.round(n.cpu * n.maxcpu), n.maxcpu)}
+          ${bar('mem-fill', n.mem, n.maxmem)}
+          ${bar('disk-fill', n.disk, n.maxdisk)}
+        </div>
+      </div>
+    `).join('')}
+    ${topVMs ? `
+    <div class="tabs">
+      <button class="tab active" data-tab="mem">Top RAM</button>
+      <button class="tab" data-tab="cpu">Top CPU</button>
+      <button class="tab" data-tab="disk">Top Disk</button>
+    </div>
+    <div id="top-vms"></div>` : ''}`;
+
+  if (topVMs) {
+    let activeTab = 'mem';
+
+    function renderTopVMs() {
+      const data = activeTab === 'mem' ? topVMs.byMem : activeTab === 'cpu' ? topVMs.byCpu : topVMs.byDisk;
+      const el = document.getElementById('top-vms');
+      if (!el || !data || !data.length) { if (el) el.innerHTML = '<div style="color:var(--fg2);font-size:11px;padding:8px 0">No running VMs</div>'; return; }
+
+      el.innerHTML = data.map(v => {
+        let barPct, barCls, valStr;
+        if (activeTab === 'mem') {
+          barPct = v.maxmem ? Math.round(v.mem / v.maxmem * 100) : 0;
+          barCls = 'top-bar-fill mem-fill';
+          valStr = fmtBytes(v.mem);
+        } else if (activeTab === 'cpu') {
+          barPct = Math.round((v.cpu || 0) * 100);
+          barCls = 'top-bar-fill cpu-fill';
+          valStr = barPct + '%';
+        } else {
+          barPct = v.maxdisk ? Math.round(v.disk / v.maxdisk * 100) : 0;
+          barCls = 'top-bar-fill disk-fill';
+          valStr = fmtBytes(v.disk);
+        }
+        return `<div class="top-vm-row" data-vmid="${v.vmid}" data-node="${v.node}" data-type="${v.type}" data-name="${v.name || v.vmid}">
+          <div class="top-vm-name">${v.name || v.vmid}</div>
+          <div class="top-bar-wrap">
+            <div class="top-bar-track"><div class="${barCls}" style="width:${barPct}%"></div></div>
+          </div>
+          <div class="top-val">${valStr}</div>
+          <div class="top-vm-node">${v.node}</div>
+        </div>`;
+      }).join('');
+
+      el.querySelectorAll('.top-vm-row').forEach(row => {
+        row.addEventListener('click', () => {
+          const { vmid, node, type, name } = row.dataset;
+          app.sendMessage({ role: 'user', content: [{ type: 'text', text: `Get VM detail for vmid ${vmid} (${name}) on node ${node}` }] });
+        });
+      });
+    }
+
+    renderTopVMs();
+
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        activeTab = tab.dataset.tab;
+        renderTopVMs();
+      });
+    });
+  }
+};
+
+(async () => {
+  const ctx = await app.getHostContext();
+  if (ctx?.theme === 'dark') document.documentElement.classList.add('dark');
+  app.onhostcontextchanged = c => document.documentElement.classList.toggle('dark', c?.theme === 'dark');
+  await app.connect();
+})();
+</script>

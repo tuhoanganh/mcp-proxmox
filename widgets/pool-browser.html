@@ -1,0 +1,236 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #ffffff; --bg2: #f5f5f5; --fg: #111111; --fg2: #555555;
+    --border: #e0e0e0; --accent: #0066cc; --green: #22863a;
+    --red: #cb2431; --yellow: #b08800; --radius: 6px;
+    font-family: system-ui, -apple-system, sans-serif; font-size: 13px;
+  }
+  :root.dark {
+    --bg: #1e1e1e; --bg2: #2a2a2a; --fg: #e8e8e8; --fg2: #999999;
+    --border: #3a3a3a; --accent: #4d9fff; --green: #3fb950;
+    --red: #f85149; --yellow: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--fg); height: 100vh; display: flex; flex-direction: column; }
+  .toolbar {
+    display: flex; gap: 6px; padding: 8px;
+    border-bottom: 1px solid var(--border); background: var(--bg2);
+    flex-shrink: 0;
+  }
+  input[type=search] {
+    flex: 1; padding: 5px 8px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--bg); color: var(--fg);
+    font-size: 12px; outline: none;
+  }
+  input[type=search]:focus { border-color: var(--accent); }
+  select {
+    padding: 5px 6px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg); color: var(--fg); font-size: 12px; cursor: pointer;
+  }
+  .main { display: flex; flex: 1; overflow: hidden; }
+  .pool-list {
+    width: 180px; flex-shrink: 0; border-right: 1px solid var(--border);
+    overflow-y: auto; background: var(--bg2);
+  }
+  .pool-btn {
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%; padding: 9px 10px; border: none; background: none;
+    color: var(--fg); font-size: 12px; cursor: pointer; text-align: left;
+    border-bottom: 1px solid var(--border); gap: 6px;
+  }
+  .pool-btn:hover { background: var(--bg); }
+  .pool-btn.active { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); font-weight: 600; }
+  .pool-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pool-count {
+    font-size: 10px; background: var(--border); color: var(--fg2);
+    border-radius: 10px; padding: 1px 6px; flex-shrink: 0;
+  }
+  .members { flex: 1; overflow-y: auto; }
+  .row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px; border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background 0.1s;
+  }
+  .row:hover { background: var(--bg2); }
+  .row.storage-row { cursor: default; opacity: 0.7; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .status-running { background: var(--green); }
+  .status-stopped { background: var(--red); }
+  .status-unknown { background: var(--fg2); }
+  .vmid { color: var(--fg2); font-size: 11px; width: 36px; flex-shrink: 0; }
+  .name { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 80px; }
+  .node-col { color: var(--fg2); font-size: 11px; width: 90px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; }
+  .type-badge {
+    font-size: 10px; padding: 1px 5px; border-radius: 3px;
+    background: var(--bg2); color: var(--fg2); border: 1px solid var(--border);
+    flex-shrink: 0; width: 28px; text-align: center;
+  }
+  .cpu-col { color: var(--fg2); font-size: 11px; width: 40px; flex-shrink: 0; text-align: right; }
+  .ram-bar-wrap { display: flex; align-items: center; gap: 4px; width: 90px; flex-shrink: 0; }
+  .bar-track { flex: 1; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; background: var(--accent); }
+  .bar-fill.warn { background: var(--yellow); }
+  .bar-fill.crit { background: var(--red); }
+  .ram-pct { font-size: 10px; color: var(--fg2); width: 28px; text-align: right; flex-shrink: 0; }
+  .empty { padding: 24px; text-align: center; color: var(--fg2); }
+  .col-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 10px; border-bottom: 1px solid var(--border);
+    background: var(--bg2); font-size: 10px; color: var(--fg2);
+    text-transform: uppercase; letter-spacing: 0.05em; position: sticky; top: 0;
+  }
+</style>
+
+<div class="toolbar">
+  <input type="search" id="q" placeholder="Search name or VMID…" />
+  <select id="filter-node"><option value="">All nodes</option></select>
+</div>
+<div class="main">
+  <div class="pool-list" id="pool-list"></div>
+  <div class="members" id="members">
+    <div class="empty">Select a pool to view members</div>
+  </div>
+</div>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+const app = new App({ name: "PoolBrowser", version: "1.0.0" }, {}, { autoResize: true });
+
+let allPools = [];
+let activePoolId = null;
+
+function fmtBytes(b) {
+  if (!b) return '0';
+  const g = b / 1073741824;
+  return g >= 1 ? g.toFixed(1) + 'G' : (b / 1048576).toFixed(0) + 'M';
+}
+
+function pct(used, max) { return max ? Math.round(used / max * 100) : 0; }
+
+function renderPools() {
+  const pl = document.getElementById('pool-list');
+  if (!allPools.length) {
+    pl.innerHTML = '<div class="empty" style="padding:12px;font-size:11px">No pools</div>';
+    return;
+  }
+  pl.innerHTML = allPools.map(p => {
+    const vmMembers = (p.members || []).filter(m => m.type !== 'storage');
+    return `<button class="pool-btn${p.poolid === activePoolId ? ' active' : ''}" data-pool="${p.poolid}">
+      <span class="pool-name" title="${p.poolid}">${p.poolid}</span>
+      <span class="pool-count">${vmMembers.length}</span>
+    </button>`;
+  }).join('');
+  pl.querySelectorAll('.pool-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activePoolId = btn.dataset.pool;
+      renderPools();
+      renderMembers();
+    });
+  });
+}
+
+function renderMembers() {
+  const q = document.getElementById('q').value.toLowerCase();
+  const nodeFilter = document.getElementById('filter-node').value;
+  const membersEl = document.getElementById('members');
+
+  const pool = allPools.find(p => p.poolid === activePoolId);
+  if (!pool) {
+    membersEl.innerHTML = '<div class="empty">Select a pool to view members</div>';
+    return;
+  }
+
+  let members = (pool.members || []).filter(m => m.type !== 'storage');
+
+  if (q) members = members.filter(m =>
+    (m.name || '').toLowerCase().includes(q) ||
+    String(m.vmid || '').includes(q)
+  );
+  if (nodeFilter) members = members.filter(m => m.node === nodeFilter);
+
+  if (!members.length) {
+    membersEl.innerHTML = `
+      <div class="col-header" style="padding:5px 10px;font-size:11px;color:var(--fg2)">${pool.poolid}${pool.comment ? ` — ${pool.comment}` : ''}</div>
+      <div class="empty">No members match</div>`;
+    return;
+  }
+
+  const ramPct = m => pct(m.mem, m.maxmem);
+  const barCls = p => p > 80 ? 'bar-fill crit' : p > 50 ? 'bar-fill warn' : 'bar-fill';
+  const cpuPct = m => m.cpu != null ? Math.round(m.cpu * 100) + '%' : '—';
+
+  membersEl.innerHTML = `
+    <div class="col-header">
+      <span style="width:7px"></span>
+      <span style="width:36px">ID</span>
+      <span style="flex:1">Name</span>
+      <span style="width:90px">Node</span>
+      <span style="width:28px">Type</span>
+      <span style="width:40px;text-align:right">CPU</span>
+      <span style="width:90px">RAM</span>
+    </div>
+    ${members.map(m => {
+      const rp = ramPct(m);
+      const statusCls = m.status === 'running' ? 'status-running' : m.status === 'stopped' ? 'status-stopped' : 'status-unknown';
+      return `<div class="row" data-vmid="${m.vmid}" data-node="${m.node}" data-type="${m.type}" data-name="${m.name || m.vmid}" data-pool="${activePoolId}">
+        <div class="status-dot ${statusCls}"></div>
+        <div class="vmid">${m.vmid ?? '—'}</div>
+        <div class="name">${m.name || '(unnamed)'}</div>
+        <div class="node-col">${m.node}</div>
+        <div class="type-badge">${m.type === 'qemu' ? 'VM' : 'CT'}</div>
+        <div class="cpu-col">${cpuPct(m)}</div>
+        <div class="ram-bar-wrap">
+          <div class="bar-track"><div class="${barCls(rp)}" style="width:${rp}%"></div></div>
+          <div class="ram-pct">${rp}%</div>
+        </div>
+      </div>`;
+    }).join('')}`;
+
+  membersEl.querySelectorAll('.row').forEach(row => {
+    row.addEventListener('click', () => {
+      const { vmid, node, type, name, pool } = row.dataset;
+      if (!vmid) return;
+      app.sendMessage({
+        role: 'user',
+        content: [{ type: 'text', text: `Selected VM: ${vmid} (${name}) — node: ${node}, type: ${type}, pool: ${pool}` }]
+      });
+    });
+  });
+}
+
+app.ontoolresult = ({ content }) => {
+  try {
+    const data = JSON.parse(content[0].text);
+    allPools = data.pools || [];
+
+    // Populate node filter from all members
+    const nodeSet = new Set();
+    allPools.forEach(p => (p.members || []).forEach(m => m.node && nodeSet.add(m.node)));
+    const nodeSelect = document.getElementById('filter-node');
+    nodeSelect.innerHTML = '<option value="">All nodes</option>' +
+      [...nodeSet].sort().map(n => `<option value="${n}">${n}</option>`).join('');
+
+    // Auto-select first pool
+    if (allPools.length && !activePoolId) activePoolId = allPools[0].poolid;
+
+    renderPools();
+    renderMembers();
+  } catch {
+    document.getElementById('members').innerHTML = '<div class="empty">Failed to load pool data</div>';
+  }
+};
+
+document.getElementById('q').addEventListener('input', renderMembers);
+document.getElementById('filter-node').addEventListener('change', renderMembers);
+
+(async () => {
+  const ctx = await app.getHostContext();
+  if (ctx?.theme === 'dark') document.documentElement.classList.add('dark');
+  app.onhostcontextchanged = c => document.documentElement.classList.toggle('dark', c?.theme === 'dark');
+  await app.connect();
+})();
+</script>

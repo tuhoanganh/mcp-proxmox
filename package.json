@@ -1,0 +1,28 @@
+{
+  "name": "mcp-proxmox",
+  "version": "1.0.0",
+  "description": "Proxmox VE management MCP server with interactive UI widgets",
+  "type": "module",
+  "bin": {
+    "mcp-proxmox": "./dist/server.js",
+    "mcp-proxmox-setup": "./dist/setup.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "setup": "node dist/setup.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "axios": "^1.7.0",
+    "https-proxy-agent": "^7.0.0",
+    "otplib": "^12.0.1",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

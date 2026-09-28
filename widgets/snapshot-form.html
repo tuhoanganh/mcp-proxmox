@@ -1,0 +1,101 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg:#fff;--bg2:#f5f5f5;--fg:#111;--fg2:#666;--border:#e0e0e0;
+    --accent:#0066cc;--radius:6px;
+    font-family:system-ui,-apple-system,sans-serif;font-size:13px;
+  }
+  :root.dark{--bg:#1e1e1e;--bg2:#2a2a2a;--fg:#e8e8e8;--fg2:#999;--border:#3a3a3a;--accent:#4d9fff;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--fg);padding:14px;}
+  h2{font-size:14px;font-weight:600;margin-bottom:12px;}
+  .field{margin-bottom:10px;}
+  label{display:block;font-size:11px;color:var(--fg2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px;}
+  input[type=text], textarea{
+    width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);
+    background:var(--bg);color:var(--fg);font-size:13px;font-family:inherit;outline:none;
+  }
+  input[type=text]:focus,textarea:focus{border-color:var(--accent);}
+  textarea{resize:vertical;min-height:60px;}
+  .checkbox-row{display:flex;align-items:center;gap:8px;cursor:pointer;}
+  input[type=checkbox]{width:14px;height:14px;cursor:pointer;}
+  .hint{font-size:11px;color:var(--fg2);margin-top:3px;}
+  .actions{display:flex;gap:8px;margin-top:14px;}
+  .btn{padding:7px 16px;border:none;border-radius:var(--radius);font-size:13px;font-weight:500;cursor:pointer;}
+  .btn-primary{background:var(--accent);color:#fff;}
+  .btn-cancel{background:var(--bg2);color:var(--fg);border:1px solid var(--border);}
+  .btn:hover{opacity:0.85;}
+  .meta{font-size:11px;color:var(--fg2);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);}
+</style>
+
+<div id="root">
+  <h2>Create Snapshot</h2>
+  <div id="meta" class="meta"></div>
+  <div class="field">
+    <label>Snapshot Name *</label>
+    <input type="text" id="name" placeholder="e.g. pre-upgrade-2024" />
+    <div class="hint">No spaces — use hyphens or underscores</div>
+  </div>
+  <div class="field">
+    <label>Description</label>
+    <textarea id="desc" placeholder="Optional description"></textarea>
+  </div>
+  <div class="field" id="vmstate-field" style="display:none">
+    <label class="checkbox-row">
+      <input type="checkbox" id="vmstate" />
+      Include RAM state (live snapshot)
+    </label>
+    <div class="hint">Saves memory state so VM can resume from exact point. Takes longer and uses more disk.</div>
+  </div>
+  <div class="actions">
+    <button class="btn btn-cancel" id="cancel">Cancel</button>
+    <button class="btn btn-primary" id="submit">Create Snapshot</button>
+  </div>
+</div>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+const app = new App({ name: "SnapshotForm", version: "1.0.0" }, {}, { autoResize: true });
+
+let meta = {};
+
+app.ontoolresult = ({ content }) => {
+  let d;
+  try { d = JSON.parse(content[0].text); } catch { return; }
+  meta = d;
+  document.getElementById('meta').textContent = `VM ${d.vmid} on ${d.node} (${d.type})`;
+  if (d.type === 'qemu') document.getElementById('vmstate-field').style.display = 'block';
+};
+
+document.getElementById('cancel').onclick = () => {
+  app.updateModelContext({ role: 'user', content: [{ type: 'text', text: 'Snapshot creation cancelled' }] });
+};
+
+document.getElementById('submit').onclick = () => {
+  const name = document.getElementById('name').value.trim();
+  if (!name) { document.getElementById('name').style.borderColor = 'var(--red)'; return; }
+  const desc = document.getElementById('desc').value.trim();
+  const vmstate = document.getElementById('vmstate').checked;
+
+  const parts = [`name="${name}"`];
+  if (desc) parts.push(`description="${desc}"`);
+  if (meta.type === 'qemu') parts.push(`vmstate=${vmstate}`);
+
+  app.sendMessage({
+    role: 'user',
+    content: [{
+      type: 'text',
+      text: `Create snapshot for VM ${meta.vmid} on ${meta.node} (type: ${meta.type}) with ${parts.join(', ')}. Please call create_snapshot_execute.`
+    }]
+  });
+};
+
+(async () => {
+  const ctx = await app.getHostContext();
+  if (ctx?.theme === 'dark') document.documentElement.classList.add('dark');
+  app.onhostcontextchanged = c => document.documentElement.classList.toggle('dark', c?.theme === 'dark');
+  await app.connect();
+})();
+</script>

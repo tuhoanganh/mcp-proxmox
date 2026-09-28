@@ -1,0 +1,102 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg:#fff;--bg2:#f5f5f5;--fg:#111;--fg2:#666;--border:#e0e0e0;
+    --accent:#0066cc;--red:#cf222e;--radius:6px;
+    font-family:system-ui,-apple-system,sans-serif;font-size:13px;
+  }
+  :root.dark{--bg:#1e1e1e;--bg2:#2a2a2a;--fg:#e8e8e8;--fg2:#999;--border:#3a3a3a;--accent:#4d9fff;--red:#f85149;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--fg);}
+  .header{padding:8px 12px;background:var(--bg2);border-bottom:1px solid var(--border);font-weight:600;}
+  .sub{font-size:11px;color:var(--fg2);font-weight:400;}
+  .list{max-height:340px;overflow-y:auto;}
+  .row{
+    display:flex;align-items:center;gap:10px;padding:9px 12px;
+    border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.1s;
+  }
+  .row:hover{background:var(--bg2);}
+  .snap-name{font-weight:500;flex:1;}
+  .snap-desc{color:var(--fg2);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;}
+  .snap-time{color:var(--fg2);font-size:11px;white-space:nowrap;}
+  .snap-parent{font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg2);color:var(--fg2);border:1px solid var(--border);}
+  .current{background:color-mix(in srgb,var(--accent) 10%,var(--bg));}
+  .actions{display:flex;gap:6px;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg2);}
+  .btn{padding:5px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--fg);font-size:12px;cursor:pointer;}
+  .btn-danger{background:var(--red);color:#fff;border-color:var(--red);}
+  .btn:hover{opacity:0.85;}
+  .empty{padding:20px;text-align:center;color:var(--fg2);}
+</style>
+
+<div class="header">
+  Snapshots — <span id="vmtitle" class="sub"></span>
+</div>
+<div class="list" id="list"></div>
+<div class="actions" id="actions" style="display:none">
+  <button class="btn" id="btn-select">Select for Rollback</button>
+</div>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+const app = new App({ name: "SnapshotPicker", version: "1.0.0" }, {}, { autoResize: true });
+
+let selected = null;
+let meta = {};
+
+function fmtDate(ts) {
+  if (!ts) return '';
+  return new Date(ts * 1000).toLocaleString();
+}
+
+app.ontoolresult = ({ content }) => {
+  let d;
+  try { d = JSON.parse(content[0].text); } catch { return; }
+  const { vmid, node, type, snapshots } = d;
+  meta = { vmid, node, type };
+
+  document.getElementById('vmtitle').textContent = `VM ${vmid} on ${node}`;
+
+  const list = document.getElementById('list');
+  const real = snapshots.filter(s => s.name !== 'current');
+
+  if (!real.length) {
+    list.innerHTML = '<div class="empty">No snapshots found</div>';
+    return;
+  }
+
+  list.innerHTML = real.map(s => `
+    <div class="row" data-name="${s.name}">
+      <div class="snap-name">${s.name}</div>
+      <div class="snap-desc" title="${s.description || ''}">${s.description || ''}</div>
+      <div class="snap-time">${fmtDate(s.snaptime)}</div>
+      ${s.parent ? `<div class="snap-parent">↑ ${s.parent}</div>` : ''}
+    </div>
+  `).join('');
+
+  list.querySelectorAll('.row').forEach(row => {
+    row.addEventListener('click', () => {
+      list.querySelectorAll('.row').forEach(r => r.classList.remove('current'));
+      row.classList.add('current');
+      selected = row.dataset.name;
+      document.getElementById('actions').style.display = 'flex';
+    });
+  });
+};
+
+document.getElementById('btn-select').onclick = () => {
+  if (!selected) return;
+  app.sendMessage({
+    role: 'user',
+    content: [{ type: 'text', text: `Selected snapshot '${selected}' for VM ${meta.vmid} on ${meta.node} (type: ${meta.type}). Please call rollback_snapshot with snapname="${selected}".` }]
+  });
+};
+
+(async () => {
+  const ctx = await app.getHostContext();
+  if (ctx?.theme === 'dark') document.documentElement.classList.add('dark');
+  app.onhostcontextchanged = c => document.documentElement.classList.toggle('dark', c?.theme === 'dark');
+  await app.connect();
+})();
+</script>

@@ -1,0 +1,115 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg:#fff;--bg2:#f5f5f5;--fg:#111;--fg2:#666;--border:#e0e0e0;
+    --accent:#0066cc;--red:#cb2431;--radius:6px;
+    font-family:system-ui,-apple-system,sans-serif;font-size:13px;
+  }
+  :root.dark{--bg:#1e1e1e;--bg2:#2a2a2a;--fg:#e8e8e8;--fg2:#999;--border:#3a3a3a;--accent:#4d9fff;--red:#f85149;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--fg);padding:14px;}
+  h2{font-size:14px;font-weight:600;margin-bottom:12px;}
+  .field{margin-bottom:10px;}
+  label{display:block;font-size:11px;color:var(--fg2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px;}
+  input[type=text],input[type=password],textarea{
+    width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);
+    background:var(--bg);color:var(--fg);font-size:13px;font-family:inherit;outline:none;
+  }
+  input[type=text]:focus,input[type=password]:focus,textarea:focus{border-color:var(--accent);}
+  textarea{resize:vertical;min-height:70px;font-family:monospace;}
+  .hint{font-size:11px;color:var(--fg2);margin-top:3px;}
+  .warn{font-size:11px;color:var(--red);margin-top:6px;display:none;}
+  .actions{display:flex;gap:8px;margin-top:14px;}
+  .btn{padding:7px 16px;border:none;border-radius:var(--radius);font-size:13px;font-weight:500;cursor:pointer;}
+  .btn-primary{background:var(--accent);color:#fff;}
+  .btn-cancel{background:var(--bg2);color:var(--fg);border:1px solid var(--border);}
+  .btn:hover{opacity:0.85;}
+  .meta{font-size:11px;color:var(--fg2);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);}
+</style>
+
+<div id="root">
+  <h2>Set Cloud-Init</h2>
+  <div id="meta" class="meta"></div>
+  <div class="field">
+    <label>Username (ciuser)</label>
+    <input type="text" id="ciuser" placeholder="e.g. ubuntu" />
+  </div>
+  <div class="field">
+    <label>Password (cipassword)</label>
+    <input type="password" id="cipassword" placeholder="Leave blank to keep existing" />
+    <div class="hint">Leave blank to keep existing password</div>
+  </div>
+  <div class="field">
+    <label>SSH Public Keys</label>
+    <textarea id="sshkeys" placeholder="Paste one public key per line"></textarea>
+    <div class="hint">Leave blank to keep existing keys</div>
+  </div>
+  <div class="field">
+    <label>IP Configuration (ipconfig0)</label>
+    <input type="text" id="ipconfig0" placeholder="ip=dhcp or ip=192.168.1.50/24,gw=192.168.1.1" />
+  </div>
+  <div class="warn" id="warn">Please fill in at least one field.</div>
+  <div class="actions">
+    <button class="btn btn-cancel" id="cancel">Cancel</button>
+    <button class="btn btn-primary" id="submit">Apply Cloud-Init</button>
+  </div>
+</div>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+const app = new App({ name: "CloudInitForm", version: "1.0.0" }, {}, { autoResize: true });
+
+let meta = {};
+
+app.ontoolresult = ({ content }) => {
+  let d;
+  try { d = JSON.parse(content[0].text); } catch { return; }
+  meta = d;
+  document.getElementById('meta').textContent = `VM ${d.vmid} on ${d.node} — ${d.name}`;
+  if (d.current) {
+    document.getElementById('ciuser').value = d.current.ciuser || '';
+    document.getElementById('sshkeys').value = d.current.sshkeys || '';
+    document.getElementById('ipconfig0').value = d.current.ipconfig0 || '';
+  }
+};
+
+document.getElementById('cancel').onclick = () => {
+  app.updateModelContext({ role: 'user', content: [{ type: 'text', text: 'Cloud-init update cancelled' }] });
+};
+
+document.getElementById('submit').onclick = () => {
+  const ciuser = document.getElementById('ciuser').value.trim();
+  const cipassword = document.getElementById('cipassword').value;
+  const sshkeys = document.getElementById('sshkeys').value.trim();
+  const ipconfig0 = document.getElementById('ipconfig0').value.trim();
+
+  const parts = [];
+  if (ciuser) parts.push(`ciuser="${ciuser}"`);
+  if (cipassword) parts.push(`cipassword="${cipassword}"`);
+  if (sshkeys) parts.push(`sshkeys="""${sshkeys}"""`);
+  if (ipconfig0) parts.push(`ipconfig0="${ipconfig0}"`);
+
+  if (parts.length === 0) {
+    document.getElementById('warn').style.display = 'block';
+    return;
+  }
+  document.getElementById('warn').style.display = 'none';
+
+  app.sendMessage({
+    role: 'user',
+    content: [{
+      type: 'text',
+      text: `Set cloud-init on VM ${meta.vmid} on ${meta.node} with ${parts.join(', ')}. Please call set_cloud_init_execute.`
+    }]
+  });
+};
+
+(async () => {
+  const ctx = await app.getHostContext();
+  if (ctx?.theme === 'dark') document.documentElement.classList.add('dark');
+  app.onhostcontextchanged = c => document.documentElement.classList.toggle('dark', c?.theme === 'dark');
+  await app.connect();
+})();
+</script>

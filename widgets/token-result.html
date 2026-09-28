@@ -1,0 +1,126 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg:#fff;--bg2:#f5f5f5;--fg:#111;--fg2:#666;--border:#e0e0e0;
+    --accent:#0066cc;--green:#2da44e;--red:#cf222e;--radius:6px;
+    font-family:system-ui,-apple-system,sans-serif;font-size:13px;
+  }
+  :root.dark{--bg:#1e1e1e;--bg2:#2a2a2a;--fg:#e8e8e8;--fg2:#999;--border:#3a3a3a;--accent:#4d9fff;--green:#3fb950;--red:#f85149;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--fg);padding:14px;}
+  h2{font-size:14px;font-weight:600;margin-bottom:12px;}
+  .field{margin-bottom:10px;}
+  label{display:block;font-size:11px;color:var(--fg2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px;}
+  input[type=text]{width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--fg);font-size:13px;outline:none;}
+  input[type=text]:focus{border-color:var(--accent);}
+  input[type=date]{padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--fg);font-size:13px;}
+  .checkbox-row{display:flex;align-items:center;gap:8px;cursor:pointer;}
+  input[type=checkbox]{width:14px;height:14px;}
+  .hint{font-size:11px;color:var(--fg2);margin-top:2px;}
+  .actions{display:flex;gap:8px;margin-top:14px;}
+  .btn{padding:7px 16px;border:none;border-radius:var(--radius);font-size:13px;font-weight:500;cursor:pointer;}
+  .btn-primary{background:var(--accent);color:#fff;}
+  .btn-cancel{background:var(--bg2);color:var(--fg);border:1px solid var(--border);}
+  .btn:hover{opacity:0.85;}
+  /* result view */
+  .success-banner{padding:10px 12px;background:color-mix(in srgb,var(--green) 12%,var(--bg));border:1px solid color-mix(in srgb,var(--green) 30%,transparent);border-radius:var(--radius);margin-bottom:12px;color:var(--green);font-weight:500;}
+  .token-box{
+    display:flex;align-items:center;gap:8px;padding:8px 10px;
+    background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);
+    font-family:monospace;font-size:11px;word-break:break-all;
+  }
+  .token-val{flex:1;}
+  .copy-btn{padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:11px;cursor:pointer;white-space:nowrap;}
+  .copy-btn:hover{background:var(--bg2);}
+  .warn-box{margin-top:10px;padding:8px 12px;border-left:3px solid var(--red);background:color-mix(in srgb,var(--red) 8%,var(--bg));font-size:12px;}
+  .error-msg{padding:12px;background:color-mix(in srgb,var(--red) 10%,var(--bg));border:1px solid var(--red);border-radius:var(--radius);color:var(--red);}
+</style>
+
+<div id="root"></div>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+const app = new App({ name: "TokenResult", version: "1.0.0" }, {}, { autoResize: true });
+
+app.ontoolresult = ({ content }) => {
+  let d;
+  try { d = JSON.parse(content[0].text); } catch { return; }
+  const root = document.getElementById('root');
+
+  if (d.mode === 'form') {
+    root.innerHTML = `
+      <h2>Create API Token</h2>
+      <div class="field">
+        <label>User</label>
+        <input type="text" id="userid" value="${d.userid}" />
+        <div class="hint">Format: user@realm (e.g. root@pam)</div>
+      </div>
+      <div class="field">
+        <label>Token ID</label>
+        <input type="text" id="tokenid" placeholder="e.g. my-automation" />
+        <div class="hint">Alphanumeric and hyphens only</div>
+      </div>
+      <div class="field">
+        <label>Expires</label>
+        <input type="date" id="expire" />
+        <div class="hint">Leave empty for no expiry</div>
+      </div>
+      <div class="field">
+        <label class="checkbox-row"><input type="checkbox" id="privsep" checked /> Privilege separation</label>
+        <div class="hint">Recommended: limits token to subset of user's permissions</div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-cancel" id="cancel">Cancel</button>
+        <button class="btn btn-primary" id="submit">Create Token</button>
+      </div>`;
+
+    document.getElementById('cancel').onclick = () =>
+      app.updateModelContext({ role: 'user', content: [{ type: 'text', text: 'Token creation cancelled' }] });
+
+    document.getElementById('submit').onclick = () => {
+      const userid = document.getElementById('userid').value.trim();
+      const tokenid = document.getElementById('tokenid').value.trim();
+      const expireDate = document.getElementById('expire').value;
+      const privsep = document.getElementById('privsep').checked;
+      const expire = expireDate ? Math.floor(new Date(expireDate).getTime() / 1000) : 0;
+
+      if (!userid || !tokenid) return;
+      app.sendMessage({
+        role: 'user',
+        content: [{ type: 'text', text: `Create API token: userid="${userid}", tokenid="${tokenid}", expire=${expire}, privsep=${privsep}. Please call create_api_token_execute.` }]
+      });
+    };
+
+  } else if (d.mode === 'result') {
+    root.innerHTML = `
+      <div class="success-banner">✓ Token created: ${d.userid}!${d.tokenid}</div>
+      <div class="field">
+        <label>Full Token String (copy now — shown once)</label>
+        <div class="token-box">
+          <div class="token-val" id="token-val">${d.full}</div>
+          <button class="copy-btn" id="copy-btn">Copy</button>
+        </div>
+      </div>
+      <div class="warn-box">This token secret will not be shown again. Store it securely.</div>`;
+
+    document.getElementById('copy-btn').onclick = () => {
+      navigator.clipboard.writeText(d.full).then(() => {
+        document.getElementById('copy-btn').textContent = 'Copied!';
+        app.updateModelContext({ role: 'user', content: [{ type: 'text', text: `API token ${d.userid}!${d.tokenid} has been copied to clipboard.` }] });
+      });
+    };
+
+  } else if (d.mode === 'error') {
+    root.innerHTML = `<div class="error-msg">Error: ${d.message}</div>`;
+  }
+};
+
+(async () => {
+  const ctx = await app.getHostContext();
+  if (ctx?.theme === 'dark') document.documentElement.classList.add('dark');
+  app.onhostcontextchanged = c => document.documentElement.classList.toggle('dark', c?.theme === 'dark');
+  await app.connect();
+})();
+</script>
