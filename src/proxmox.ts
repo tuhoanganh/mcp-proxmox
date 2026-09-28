@@ -432,7 +432,7 @@ export class ProxmoxClient {
     node: string,
     vmid: number,
     newid: number,
-    opts: { name?: string; target?: string; storage?: string } = {}
+    opts: { name?: string; target?: string; storage?: string; pool?: string } = {}
   ): Promise<string> {
     await this.ensureSession();
     try {
@@ -440,6 +440,7 @@ export class ProxmoxClient {
       if (opts.name) body.name = opts.name;
       if (opts.target) body.target = opts.target;
       if (opts.storage) body.storage = opts.storage;
+      if (opts.pool) body.pool = opts.pool;
       const r = await this.http.post(
         `/nodes/${node}/qemu/${vmid}/clone`,
         body,
@@ -461,6 +462,19 @@ export class ProxmoxClient {
       await this.http.put(
         `/nodes/${node}/qemu/${vmid}/config`,
         params,
+        { headers: this.headers() }
+      );
+    } catch (e) {
+      this.handleError(e);
+    }
+  }
+
+  async addVmsToPool(poolid: string, vmids: number[]): Promise<void> {
+    await this.ensureSession();
+    try {
+      await this.http.put(
+        `/pools/${encodeURIComponent(poolid)}`,
+        { vms: vmids.join(",") },
         { headers: this.headers() }
       );
     } catch (e) {

@@ -53,11 +53,12 @@ export function registerCloneTools(server: McpServer, client: ProxmoxClient): vo
       name: z.string().optional().describe("Name for the new VM"),
       target: z.string().optional().describe("Target node (defaults to same node)"),
       storage: z.string().optional().describe("Target storage for full clone"),
+      pool: z.string().optional().describe("Pool to place the clone in (VM joins this pool at creation)"),
       wait: z.boolean().optional().describe("Wait for the clone task to finish before returning (default true)"),
     },
-    async ({ vmid, node, newid, name, target, storage, wait }) => {
+    async ({ vmid, node, newid, name, target, storage, pool, wait }) => {
       try {
-        const upid = await client.cloneVM(node, vmid, newid, { name, target, storage });
+        const upid = await client.cloneVM(node, vmid, newid, { name, target, storage, pool });
         if (wait !== false) {
           await client.waitForTask(node, upid, { timeoutMs: 20 * 60 * 1000 });
         }

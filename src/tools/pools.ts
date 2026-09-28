@@ -65,4 +65,32 @@ export function registerPoolTools(server: McpServer, client: ProxmoxClient): voi
       };
     }
   );
+
+  // ── assign_vm_to_pool_execute ─────────────────────────────────────────────
+  server.tool(
+    "assign_vm_to_pool_execute",
+    "Add one or more VMs to a Proxmox resource pool (idempotent).",
+    {
+      poolid: z.string().describe("Target pool id"),
+      vmids: z.array(z.number()).describe("VM IDs to add to the pool"),
+    },
+    async ({ poolid, vmids }) => {
+      try {
+        await client.addVmsToPool(poolid, vmids);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `VM(s) ${vmids.join(", ")} added to pool "${poolid}".`,
+            },
+          ],
+        };
+      } catch (e) {
+        return {
+          content: [{ type: "text", text: `assign_vm_to_pool failed: ${(e as Error).message}` }],
+          isError: true,
+        };
+      }
+    }
+  );
 }
