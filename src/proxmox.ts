@@ -356,6 +356,19 @@ export class ProxmoxClient {
     return token.split("!")[0];
   }
 
+  async getPermissions(path?: string): Promise<Record<string, Record<string, number>>> {
+    await this.ensureSession();
+    try {
+      const r = await this.http.get("/access/permissions", {
+        headers: this.headers(),
+        params: path ? { path } : undefined,
+      });
+      return r.data.data as Record<string, Record<string, number>>;
+    } catch (e) {
+      this.handleError(e);
+    }
+  }
+
   async listPools(): Promise<Pool[]> {
     await this.ensureSession();
     try {

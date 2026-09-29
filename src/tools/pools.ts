@@ -93,4 +93,40 @@ export function registerPoolTools(server: McpServer, client: ProxmoxClient): voi
       }
     }
   );
+
+  // ── verify_pool_access ─────────────────────────────────────────────
+  server.tool(
+    "verify_pool_access",
+    "Verify the authenticated Proxmox identity is authorized to allocate VMs in a pool. Resolves the current user from the credential and checks /access/permissions for VM.Allocate on /pool/<poolid>. Returns authorized=false (does not throw for an unauthorized/missing pool) so callers can STOP — pool visibility is NOT ownership.",
+    {
+      poolid: z.string().describe("Pool id to verify (the caller's own pool)"),
+    },
+    async ({ poolid }) => {
+      try {
+        const currentUser = await client.getCurrentUser();
+        const path = `/pool/${poolid}`;
+        const perms = await client.getPermissions(path);
+        const p =
+          (perms && (perms[path] as Record<string, number> | undefined)) ??
+          (perms as unknown as Record<string, number>) ??
+          {};
+        const authorized = !!(p["VM.Allocate"] || p["Permissions.Modify"]);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ currentUser, poolid, path, authorized, permissions: p }),
+            },
+          ],
+        };
+      } catch (e) {
+        return {
+          content: [
+            { type: "text", text: JSON.stringify({ poolid, authorized: false, error: (e as Error).message }) },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
 }
