@@ -41,7 +41,7 @@ export async function createSession(
   if (!auth.totp) {
     throw new Error(
       "Proxmox requires TOTP but no totp secret is configured. " +
-        "Run node dist/setup.js to add your TOTP secret."
+        "Run npx -y -p mcp-proxmox mcp-proxmox-setup to add your TOTP secret."
     );
   }
   const code = authenticator.generate(auth.totp);

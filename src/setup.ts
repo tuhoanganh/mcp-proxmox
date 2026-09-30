@@ -73,7 +73,7 @@ async function main() {
   saveConfig(config);
 
   console.log(`\n✓ Config saved to: ${CONFIG_FILE}`);
-  console.log("  Run 'node dist/server.js' to start the MCP server.\n");
+  console.log("  Restart Claude Code to load the server.\n");
 
   rl.close();
 }

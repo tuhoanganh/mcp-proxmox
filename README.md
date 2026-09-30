@@ -11,26 +11,40 @@ A Claude Code MCP server for managing Proxmox VE clusters with interactive UI wi
 ## Installation
 
 ```bash
-cd ~/.claude/mcp-servers/mcp-proxmox
-npm install
-npm run build
+claude mcp add proxmox -s user -- npx -y mcp-proxmox
 ```
 
-Register globally (if not already done):
+Restart Claude Code. The server always starts; until it is configured it exposes a single `setup_proxmox` tool.
 
-```bash
-claude mcp add proxmox -s user -- /opt/homebrew/bin/node /Users/$(whoami)/.claude/mcp-servers/mcp-proxmox/dist/server.js
+> **Local development:** clone the repo, then `npm install && npm run build` and register `node /path/to/mcp-proxmox/dist/server.js` instead of the npx command.
+
+## Configuration
+
+Pick one of three options. The config lives at `~/.mcp-proxmox/config.json` (mode `600`). Restart Claude Code afterwards if you used option 2 or 3.
+
+1. **Ask Claude.** In Claude Code say "set up proxmox". Claude calls `setup_proxmox`, which opens a form for the connection details and tests the connection before saving. Secrets entered in the form do not pass through the model. Clients without form support fall back to Claude asking in chat, where secrets end up in the transcript; use option 2 or 3 to avoid that.
+2. **Run the wizard.** `npx -y -p mcp-proxmox mcp-proxmox-setup`
+3. **Edit the file by hand.** Create `~/.mcp-proxmox/config.json`, then `chmod 600 ~/.mcp-proxmox/config.json`.
+
+API token:
+
+```json
+{"host":"<proxmox_ip>","port":8006,"auth":{"type":"apitoken","token":"<username>@pam!<token_id>=<token_secret>"},"insecure":true}
 ```
 
-## First-time Setup
+Password:
 
-Run the interactive setup wizard to configure your Proxmox host and authentication:
-
-```bash
-node dist/setup.js
+```json
+{"host":"<proxmox_ip>","port":8006,"auth":{"type":"password","username":"<username>@pam","password":"<password>"},"insecure":true}
 ```
 
-Config is written to `~/.mcp-proxmox/config.json` with mode `600`. Restart Claude Code after setup.
+Password with 2FA (add a base32 `totp` secret to `auth`):
+
+```json
+{"host":"<proxmox_ip>","port":8006,"auth":{"type":"password","username":"<username>@pam","password":"<password>","totp":"<base32 secret>"},"insecure":true}
+```
+
+> `insecure: true` skips TLS certificate verification, required for Proxmox's default self-signed certificate.
 
 ### Auth modes
 
@@ -42,23 +56,14 @@ Config is written to `~/.mcp-proxmox/config.json` with mode `600`. Restart Claud
 
 **API token format:** `user@realm!tokenid=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
 
-Example config:
-
-```json
-{
-  "host": "192.168.1.100",
-  "port": 8006,
-  "insecure": true,
-  "auth": {
-    "type": "apitoken",
-    "token": "root@pam!claude=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-  }
-}
-```
-
-> `insecure: true` skips TLS certificate verification — required for Proxmox's default self-signed certificate.
-
 ## Tools
+
+### Setup
+
+#### `setup_proxmox`
+Only available while no config exists. Call it with no arguments: it opens two forms (host, port, auth type, TLS; then the credentials for that auth type) through MCP elicitation, so secrets never pass through the model. Declining either form cancels without saving. Clients that cannot show forms can pass `host`, `port` (default 8006), `auth` (`apitoken` with `token`, or `password` with `username`, `password`, optional `totp`) and `insecure` (default true) instead. Tests the connection, saves the config on success, then replaces itself with the full tool set.
+
+---
 
 ### VM Management
 
@@ -190,10 +195,10 @@ A role with `VM.Audit + VM.PowerMgmt + VM.Snapshot + Sys.Audit` covers everythin
 ## Troubleshooting
 
 **Server not connecting**
-Check that `~/.mcp-proxmox/config.json` exists. Run `node dist/setup.js` if not.
+Check that `~/.mcp-proxmox/config.json` exists. If not, ask Claude to "set up proxmox" or run `npx -y -p mcp-proxmox mcp-proxmox-setup`.
 
 **401 Unauthorized**
-Your API token or password is wrong, or the session expired. Re-run setup.
+Your API token or password is wrong, or the session expired. Re-run setup (`npx -y -p mcp-proxmox mcp-proxmox-setup`).
 
 **403 Permission denied**
 The token/user lacks the required privilege for that operation. Check the permissions table above.

@@ -1,9 +1,12 @@
 {
   "name": "mcp-proxmox",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Proxmox VE management MCP server with interactive UI widgets",
   "type": "module",
-  "files": ["dist", "widgets"],
+  "files": [
+    "dist",
+    "widgets"
+  ],
   "bin": {
     "mcp-proxmox": "./dist/server.js",
     "mcp-proxmox-setup": "./dist/setup.js"
