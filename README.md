@@ -87,6 +87,11 @@ Shows a confirmation dialog before performing a lifecycle action on a VM or cont
 #### `vm_action_execute`
 Executes a confirmed VM action. Called automatically after confirmation — do not call directly.
 
+#### `resize_disk`
+Grows a VM or container disk. Disks can only grow, never shrink; the guest filesystem is not resized.
+
+**Inputs:** `vmid`, `node`, `type` (`qemu` default | `lxc`), `disk` (e.g. `scsi0`, `rootfs`), `size` (absolute `100G` or relative `+90G`)
+
 ---
 
 ### Snapshots

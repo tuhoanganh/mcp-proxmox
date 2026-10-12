@@ -200,5 +200,36 @@ export function registerVmTools(server: McpServer, client: ProxmoxClient): void 
       }
     }
   );
+
+  // ── resize_disk ───────────────────────────────────────────────────────────
+  server.tool(
+    "resize_disk",
+    "Grow a VM or container disk (mirrors 'qm resize' / 'pct resize'). Disks can only grow, never shrink. A leading '+' means relative (e.g. '+90G'); otherwise size is absolute (e.g. '100G'). The guest filesystem is not resized.",
+    {
+      vmid: z.number().describe("VM/container ID"),
+      node: z.string().describe("Node name"),
+      type: z.enum(["qemu", "lxc"]).optional().default("qemu").describe("VM type"),
+      disk: z.string().describe("Disk to resize, e.g. 'scsi0' (QEMU) or 'rootfs' (LXC)"),
+      size: z
+        .string()
+        .regex(/^\+?\d+(\.\d+)?[KMGT]?$/, "Use e.g. '100G' or '+90G'")
+        .describe("New size: absolute '100G' or relative '+90G'"),
+    },
+    { title: "Resize Disk" },
+    async ({ vmid, node, type, disk, size }) => {
+      try {
+        const upid = await client.resizeDisk(node, vmid, type, disk, size);
+        if (upid) await client.waitForTask(node, upid);
+        return {
+          content: [{ type: "text", text: `VM ${vmid} on ${node}: resized ${disk} to ${size}.` }],
+        };
+      } catch (e) {
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
+      }
+    }
+  );
 }
 

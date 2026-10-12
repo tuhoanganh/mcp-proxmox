@@ -482,6 +482,28 @@ export class ProxmoxClient {
     }
   }
 
+  async resizeDisk(
+    node: string,
+    vmid: number,
+    type: "qemu" | "lxc",
+    disk: string,
+    size: string
+  ): Promise<string | null> {
+    await this.ensureSession();
+    try {
+      const r = await this.http.put(
+        `/nodes/${node}/${type}/${vmid}/resize`,
+        { disk, size },
+        { headers: this.headers() }
+      );
+      // Newer PVE returns a task UPID; older returns null
+      const data = r.data?.data;
+      return typeof data === "string" && data.startsWith("UPID:") ? data : null;
+    } catch (e) {
+      this.handleError(e);
+    }
+  }
+
   async addVmsToPool(poolid: string, vmids: number[]): Promise<void> {
     await this.ensureSession();
     try {
