@@ -231,5 +231,44 @@ export function registerVmTools(server: McpServer, client: ProxmoxClient): void 
       }
     }
   );
-}
 
+  // ── start_vm ──────────────────────────────────────────────────────────────
+  server.tool(
+    "start_vm",
+    "Start a stopped VM or container. Start-only: cannot stop, reboot, or delete.",
+    {
+      vmid: z.number().describe("VM/container ID"),
+      node: z.string().describe("Node name"),
+      type: z.enum(["qemu", "lxc"]).optional().default("qemu").describe("VM type"),
+      wait_for_agent: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Also wait for the QEMU guest agent to answer (qemu only)"),
+    },
+    { title: "Start VM" },
+    async ({ vmid, node, type, wait_for_agent }) => {
+      try {
+        const current = await client.getVMStatusDetail(node, vmid, type);
+        if (current.status === "running") {
+          return {
+            content: [{ type: "text", text: `VM ${vmid} on ${node} is already running.` }],
+          };
+        }
+        const upid = await client.vmAction(node, vmid, type, "start");
+        await client.waitForTask(node, upid);
+        if (wait_for_agent && type === "qemu") {
+          await client.waitForGuestAgent(node, vmid);
+        }
+        return {
+          content: [{ type: "text", text: `Action 'start' completed. Task ID: ${upid}` }],
+        };
+      } catch (e) {
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+}

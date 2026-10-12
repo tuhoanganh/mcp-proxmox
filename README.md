@@ -92,6 +92,11 @@ Grows a VM or container disk. Disks can only grow, never shrink; the guest files
 
 **Inputs:** `vmid`, `node`, `type` (`qemu` default | `lxc`), `disk` (e.g. `scsi0`, `rootfs`), `size` (absolute `100G` or relative `+90G`)
 
+#### `start_vm`
+Starts a stopped VM or container. Start-only: cannot stop, reboot, or delete. Returns early if the VM is already running.
+
+**Inputs:** `vmid`, `node`, `type` (`qemu` default | `lxc`), `wait_for_agent` (optional, default `false`; qemu only)
+
 ---
 
 ### Snapshots
