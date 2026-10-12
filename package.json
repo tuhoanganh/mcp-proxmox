@@ -1,6 +1,6 @@
 {
   "name": "mcp-proxmox",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Proxmox VE management MCP server with interactive UI widgets",
   "type": "module",
   "files": [
