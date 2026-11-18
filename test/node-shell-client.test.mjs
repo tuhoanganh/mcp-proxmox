@@ -49,6 +49,10 @@ before(async () => {
       if (req.method === "POST" && req.url === "/api2/json/access/ticket") {
         const form = new URLSearchParams(body);
         log.logins.push(form.get("username"));
+        if (form.get("password") === "needs-totp") {
+          res.end(JSON.stringify({ data: { ticket: "PVECHALLENGE:root@pam:tfa", CSRFPreventionToken: "csrf-1" } }));
+          return;
+        }
         if (form.get("password") === "wrong") {
           res.statusCode = 401;
           res.end("{}");
@@ -154,6 +158,18 @@ test("a wrong shell password fails at the ticket request, before any termproxy c
   await assert.rejects(client.nodeShell("pve2", "true", 30), /rejected the node_shell login for alice@pam \(HTTP 401\)/);
   assert.equal(log.termproxy.length, 0);
   assert.equal(log.upgrades.length, 0);
+});
+
+test("a shell identity that needs TOTP without a secret is pointed at shell.totp", async () => {
+  const client = makeClient({ user: "root@pam", password: "needs-totp" });
+  serveAs(client, () => ({ rc: 0, out: "", err: "" }));
+  await assert.rejects(
+    client.nodeShell("pve2", "true", 30),
+    (e) =>
+      e.message === "Proxmox requires a TOTP code for root@pam. Add shell.totp (the base32 secret) to config.json." &&
+      !e.message.includes("mcp-proxmox-setup")
+  );
+  assert.equal(log.termproxy.length, 0);
 });
 
 test("a 403 from termproxy tells the user which privilege is missing", async () => {

@@ -2,7 +2,7 @@ import axios, { AxiosInstance, AxiosError } from "axios";
 import https from "node:https";
 import WebSocket from "ws";
 import { parseShellIdentity, type ProxmoxConfig, type ShellIdentity, type ShellIdentityResult } from "./config.js";
-import { SessionCache, sessionHeaders } from "./auth.js";
+import { SessionCache, TotpRequiredError, sessionHeaders } from "./auth.js";
 import { runShellSession, type ShellResult, type TermProxyTicket } from "./node-shell.js";
 
 export interface VMInfo {
@@ -622,6 +622,9 @@ export class ProxmoxClient {
   }
 
   private shellLoginError(e: unknown, user: string): Error {
+    if (e instanceof TotpRequiredError) {
+      return new Error(`Proxmox requires a TOTP code for ${user}. Add shell.totp (the base32 secret) to config.json.`);
+    }
     if (!(e instanceof AxiosError)) return e instanceof Error ? e : new Error(String(e));
     const status = e.response?.status;
     return new Error(
