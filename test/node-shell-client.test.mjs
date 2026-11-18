@@ -53,6 +53,10 @@ before(async () => {
           res.end(JSON.stringify({ data: { ticket: "PVECHALLENGE:root@pam:tfa", CSRFPreventionToken: "csrf-1" } }));
           return;
         }
+        if (form.get("password") === "needs-tfa") {
+          res.end(JSON.stringify({ data: { NeedTFA: 1, ticket: "PVE:root@pam:CHALLENGE!tfa!{}", CSRFPreventionToken: "csrf-1" } }));
+          return;
+        }
         if (form.get("password") === "wrong") {
           res.statusCode = 401;
           res.end("{}");
@@ -168,6 +172,16 @@ test("a shell identity that needs TOTP without a secret is pointed at shell.totp
     (e) =>
       e.message === "Proxmox requires a TOTP code for root@pam. Add shell.totp (the base32 secret) to config.json." &&
       !e.message.includes("mcp-proxmox-setup")
+  );
+  assert.equal(log.termproxy.length, 0);
+});
+
+test("a shell identity answering NeedTFA without a secret is pointed at shell.totp", async () => {
+  const client = makeClient({ user: "root@pam", password: "needs-tfa" });
+  serveAs(client, () => ({ rc: 0, out: "", err: "" }));
+  await assert.rejects(
+    client.nodeShell("pve2", "true", 30),
+    (e) => e.message === "Proxmox requires a TOTP code for root@pam. Add shell.totp (the base32 secret) to config.json."
   );
   assert.equal(log.termproxy.length, 0);
 });
