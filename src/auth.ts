@@ -26,6 +26,11 @@ export interface Session {
 // PVE tickets last 2 h. Renew early so a request never carries one that expires in flight.
 const TICKET_LIFETIME_MS = 100 * 60 * 1000;
 
+function totpCode(auth: { totp?: string }): string {
+  if (!auth.totp) throw new TotpRequiredError();
+  return authenticator.generate(auth.totp);
+}
+
 export async function createSession(
   baseUrl: string,
   auth: AuthConfig,
@@ -46,6 +51,25 @@ export async function createSession(
 
   const data1 = resp1.data?.data;
 
+  if (data1?.NeedTFA) {
+    const code = totpCode(auth);
+    const resp = await axios.post(
+      `${baseUrl}/access/ticket`,
+      new URLSearchParams({
+        username: auth.username,
+        "tfa-challenge": data1.ticket,
+        password: `totp:${code}`,
+      }),
+      { httpsAgent: agent, headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
+    const data = resp.data?.data;
+    return {
+      ticket: data.ticket,
+      csrf: data.CSRFPreventionToken,
+      expiresAt: Date.now() + TICKET_LIFETIME_MS,
+    };
+  }
+
   // If no TFA required, we have the real ticket
   if (!data1?.ticket?.startsWith("PVECHALLENGE:")) {
     return {
@@ -56,8 +80,7 @@ export async function createSession(
   }
 
   // Step 2: TFA challenge — generate TOTP
-  if (!auth.totp) throw new TotpRequiredError();
-  const code = authenticator.generate(auth.totp);
+  const code = totpCode(auth);
 
   const resp2 = await axios.post(
     `${baseUrl}/access/ticket`,
