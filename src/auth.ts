@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { AxiosError } from "axios";
 import { authenticator } from "otplib";
 import https from "node:https";
 import type { AuthConfig } from "./config.js";
@@ -11,6 +11,22 @@ export class TotpRequiredError extends Error {
     );
     this.name = "TotpRequiredError";
   }
+}
+
+export class TotpPromptCancelledError extends Error {
+  constructor() {
+    super("The TOTP prompt was cancelled or the code was not 6 digits.");
+    this.name = "TotpPromptCancelledError";
+  }
+}
+
+/** Resolves to the current 6-digit code for `username`, or rejects with TotpPromptCancelledError. */
+export type AskTotpCode = (username: string) => Promise<string>;
+
+const codeSentErrors = new WeakSet<object>();
+
+export function failedAfterCodeSent(e: unknown): boolean {
+  return typeof e === "object" && e !== null && codeSentErrors.has(e);
 }
 
 export interface Session {
@@ -26,15 +42,29 @@ export interface Session {
 // PVE tickets last 2 h. Renew early so a request never carries one that expires in flight.
 const TICKET_LIFETIME_MS = 100 * 60 * 1000;
 
-function totpCode(auth: { totp?: string }): string {
-  if (!auth.totp) throw new TotpRequiredError();
-  return authenticator.generate(auth.totp);
+async function totpCode(auth: { username: string; totp?: string }, askTotpCode?: AskTotpCode): Promise<string> {
+  if (auth.totp) return authenticator.generate(auth.totp);
+  if (askTotpCode) return askTotpCode(auth.username);
+  throw new TotpRequiredError();
+}
+
+async function postTicket(url: string, form: URLSearchParams, agent: https.Agent, codeSent = false) {
+  try {
+    return await axios.post(url, form, {
+      httpsAgent: agent,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    });
+  } catch (e) {
+    if (codeSent && e instanceof AxiosError) codeSentErrors.add(e);
+    throw e;
+  }
 }
 
 export async function createSession(
   baseUrl: string,
   auth: AuthConfig,
-  insecure = true
+  insecure = true,
+  askTotpCode?: AskTotpCode
 ): Promise<Session> {
   const agent = new https.Agent({ rejectUnauthorized: !insecure });
 
@@ -43,24 +73,25 @@ export async function createSession(
   }
 
   // Step 1: initial ticket request
-  const resp1 = await axios.post(
+  const resp1 = await postTicket(
     `${baseUrl}/access/ticket`,
     new URLSearchParams({ username: auth.username, password: auth.password }),
-    { httpsAgent: agent, headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    agent
   );
 
   const data1 = resp1.data?.data;
 
   if (data1?.NeedTFA) {
-    const code = totpCode(auth);
-    const resp = await axios.post(
+    const code = await totpCode(auth, askTotpCode);
+    const resp = await postTicket(
       `${baseUrl}/access/ticket`,
       new URLSearchParams({
         username: auth.username,
         "tfa-challenge": data1.ticket,
         password: `totp:${code}`,
       }),
-      { httpsAgent: agent, headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+      agent,
+      true
     );
     const data = resp.data?.data;
     return {
@@ -80,16 +111,17 @@ export async function createSession(
   }
 
   // Step 2: TFA challenge — generate TOTP
-  const code = totpCode(auth);
+  const code = await totpCode(auth, askTotpCode);
 
-  const resp2 = await axios.post(
+  const resp2 = await postTicket(
     `${baseUrl}/access/ticket`,
     new URLSearchParams({
       username: auth.username,
       password: data1.ticket, // the PVECHALLENGE token
       totp: code,
     }),
-    { httpsAgent: agent, headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    agent,
+    true
   );
 
   const data2 = resp2.data?.data;
@@ -110,9 +142,9 @@ export class SessionCache {
     private readonly insecure: boolean
   ) {}
 
-  async ensure(): Promise<Session> {
+  async ensure(askTotpCode?: AskTotpCode): Promise<Session> {
     if (this.session && Date.now() < this.session.expiresAt) return this.session;
-    this.pending ??= createSession(this.baseUrl, this.auth, this.insecure)
+    this.pending ??= createSession(this.baseUrl, this.auth, this.insecure, askTotpCode)
       .then((s) => (this.session = s))
       .finally(() => {
         this.pending = null;

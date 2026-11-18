@@ -1,10 +1,14 @@
 import { z } from "zod";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TotpPromptCancelledError } from "../auth.js";
 import type { ProxmoxClient } from "../proxmox.js";
 import type { ShellIdentity } from "../config.js";
 import { NodeShellError, OUTPUT_CAP_BYTES, type ShellResult } from "../node-shell.js";
 
 const DEFAULT_TIMEOUT_S = 60;
+const TOTP_PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
+const TOTP_CODE = /^\d{6}$/;
 
 const runsAs = (identity: ShellIdentity) =>
   identity.kind === "root" || identity.sudo ? "root" : identity.username;
@@ -21,6 +25,29 @@ export function formatShellResult(r: ShellResult): string {
     ...truncationNote("stderr", r.stderrBytes),
     `Task: ${r.upid}`,
   ].join("\n");
+}
+
+async function elicitTotpCode(server: McpServer, username: string): Promise<string> {
+  let result;
+  try {
+    result = await server.server.elicitInput(
+      {
+        message: `node_shell needs a new Proxmox login for ${username}. Enter the current 6-digit code from your authenticator app.`,
+        requestedSchema: {
+          type: "object",
+          properties: { code: { type: "string", title: "TOTP code", minLength: 6, maxLength: 6 } },
+          required: ["code"],
+        },
+      },
+      { timeout: TOTP_PROMPT_TIMEOUT_MS }
+    );
+  } catch (e) {
+    if (e instanceof McpError && e.code === ErrorCode.InvalidParams) throw new TotpPromptCancelledError();
+    throw e;
+  }
+  const code = result.action === "accept" ? result.content?.code : undefined;
+  if (typeof code !== "string" || !TOTP_CODE.test(code)) throw new TotpPromptCancelledError();
+  return code;
 }
 
 export function registerShellTools(server: McpServer, client: ProxmoxClient): void {
@@ -41,7 +68,10 @@ export function registerShellTools(server: McpServer, client: ProxmoxClient): vo
         "directory and variables do not carry over between calls. Stdin is /dev/null and there is no TTY, so use " +
         "batch flags (top -b, apt-get -y). Returns the exit code and separate stdout and stderr, each capped at " +
         `${OUTPUT_CAP_BYTES / 1024} KiB. Exit code 124 means the timeout fired on the node. Each call appears as a ` +
-        "vncshell task in the task log.",
+        "vncshell task in the task log." +
+        (shell.identity.auth.totp
+          ? ""
+          : " The first call, and one about every 100 minutes after, may show a form asking for a TOTP code."),
       inputSchema: {
         node: z
           .string()
@@ -60,7 +90,10 @@ export function registerShellTools(server: McpServer, client: ProxmoxClient): vo
     },
     async ({ node, command, timeout_s }) => {
       try {
-        const r = await client.nodeShell(node, command, timeout_s ?? DEFAULT_TIMEOUT_S);
+        const askTotpCode = server.server.getClientCapabilities()?.elicitation
+          ? (username: string) => elicitTotpCode(server, username)
+          : undefined;
+        const r = await client.nodeShell(node, command, timeout_s ?? DEFAULT_TIMEOUT_S, { askTotpCode });
         return { content: [{ type: "text", text: formatShellResult(r) }], isError: r.exitCode !== 0 };
       } catch (e) {
         const message =

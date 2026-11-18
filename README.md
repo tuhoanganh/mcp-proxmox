@@ -72,6 +72,8 @@ A Linux user, who runs commands through `sudo` (set `"sudo": false` to run as th
 "shell": {"user": "alice", "password": "<alice's Linux password>", "sudo": true}
 ```
 
+`totp` is optional for a user with two-factor login. Without it, `node_shell` asks for the current 6-digit code with a form (MCP elicitation) on the first call and again about every 100 minutes when the Proxmox ticket renews. The code goes from the form to the server and never through the model. Declining the form, or entering anything but 6 digits, fails the call without a login attempt. A client that cannot show forms gets an error that asks for `shell.totp`.
+
 `user` accepts `alice` or `alice@pam`. Any other realm, such as `alice@pve`, is invalid because the terminal login checks Linux accounts, not Proxmox users. An invalid block does not stop the server. It logs `[mcp-proxmox] node_shell disabled: <reason>` to stderr and leaves `node_shell` out. Every other tool keeps working.
 
 A Linux user needs all of the following:
@@ -263,7 +265,7 @@ Set `"insecure": true` in `~/.mcp-proxmox/config.json` if Proxmox uses a self-si
 Check the server's stderr for `node_shell disabled: ...`. Without a `shell` block, `node_shell` exists only when `auth` is the `root@pam` password.
 
 **`node_shell` fails with `rejected the node_shell login`**
-Proxmox returned 401 for the shell user's ticket request. Check `shell.password`, and `shell.totp` if that user has 2FA.
+Proxmox returned 401 for the shell user's ticket request. Check `shell.password`, and `shell.totp` if that user has 2FA. When the message says the code was sent, the password or the code was wrong. Try again with a fresh code. The server never retries a rejected code, because Proxmox counts failed attempts.
 
 **`node_shell` fails with `Login incorrect`**
 The ticket worked but the Linux account differs on the target node. Create the same account and password on every node you target.
