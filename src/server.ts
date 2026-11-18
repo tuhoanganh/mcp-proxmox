@@ -22,6 +22,7 @@ import { registerPoolTools } from "./tools/pools.js";
 import { registerMigrationTools } from "./tools/migration.js";
 import { registerCloneTools } from "./tools/clone.js";
 import { registerGuestTools } from "./tools/guest.js";
+import { registerShellTools } from "./tools/shell.js";
 
 function registerProxmoxTools(server: McpServer, client: ProxmoxClient) {
   registerVmTools(server, client);
@@ -32,6 +33,7 @@ function registerProxmoxTools(server: McpServer, client: ProxmoxClient) {
   registerMigrationTools(server, client);
   registerCloneTools(server, client);
   registerGuestTools(server, client);
+  registerShellTools(server, client);
 }
 
 const setupSchema = {

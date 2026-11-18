@@ -107,6 +107,11 @@ Configure it with any one of:
      {"host":"<proxmox_ip>","port":8006,"auth":{"type":"password","username":"<username>@pam","password":"<password>"},"insecure":true}
      (add "totp":"<base32 secret>" inside "auth" to enable 2FA)
 
+     Optional node_shell identity (a "shell" key next to "auth"; a root@pam password in "auth" already enables it):
+     "shell":{"user":"root@pam","password":"<root password>"}
+     "shell":{"user":"<linux username>","password":"<its Linux password>","sudo":true}
+     (add "totp":"<base32 secret>" inside "shell" if that user has 2FA; only the pam realm is supported)
+
 Then restart Claude Code.`;
 
 export function configExists(): boolean {
