@@ -56,6 +56,30 @@ Password with 2FA (add a base32 `totp` secret to `auth`):
 
 **API token format:** `user@realm!tokenid=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
 
+### Shell identity (for `node_shell`)
+
+`node_shell` runs commands through the terminal behind the web UI **Shell** button. Proxmox VE 8 rejects API tokens when it opens that terminal, so the tool always signs in with a password of its own, whatever `auth` says. Add a `shell` block to `config.json`. The tool is registered only when the block is valid, or when `auth` is already the `root@pam` password.
+
+Root, with no sudo and no login prompt (add `totp` only if root has 2FA):
+
+```json
+"shell": {"user": "root@pam", "password": "<root password>", "totp": "<base32 secret>"}
+```
+
+A Linux user, who runs commands through `sudo` (set `"sudo": false` to run as that user):
+
+```json
+"shell": {"user": "alice", "password": "<alice's Linux password>", "sudo": true}
+```
+
+`user` accepts `alice` or `alice@pam`. Any other realm, such as `alice@pve`, is invalid because the terminal login checks Linux accounts, not Proxmox users. An invalid block does not stop the server. It logs `[mcp-proxmox] node_shell disabled: <reason>` to stderr and leaves `node_shell` out. Every other tool keeps working.
+
+A Linux user needs all of the following:
+
+- A Proxmox user `alice@pam` with the `Sys.Console` privilege on `/nodes`.
+- A Linux account `alice` with the same password on the API host and on every node you target.
+- Sudo rights for that account, unless `sudo` is `false`. The tool answers the sudo prompt with the same password.
+
 ## Tools
 
 ### Setup
@@ -161,6 +185,24 @@ Creates the token and shows the secret **once** in a widget with a Copy button. 
 
 ---
 
+### Node shell
+
+#### `node_shell`
+Runs a non-interactive bash script on a node and returns the exit code with separate stdout and stderr. It opens the same termproxy and WebSocket session as the web UI **Shell** button, so every call appears as a `vncshell` task in the node's task log. Needs a [shell identity](#shell-identity-for-node_shell).
+
+**Inputs:** `node`, `command` (up to 8192 characters), `timeout_s` (1 to 600, default 60)
+
+- Each call opens a fresh login shell. The working directory and variables do not carry over.
+- Stdin is `/dev/null` and there is no TTY. Use batch flags such as `top -b` and `apt-get -y`.
+- stdout and stderr are each capped at 32 KiB. The result states the full size when it truncates.
+- Exit code `124` means the `timeout_s` limit fired on the node. A command that ignores the first signal is killed 5 seconds later.
+- A non-zero exit code marks the result as an error.
+- The node needs GNU `base64`, `stat` and `timeout`, which a stock Proxmox VE install has.
+
+> The tool is flagged destructive and runs arbitrary commands with the shell identity's rights, which means root for `root@pam` and for a sudo user. Your MCP client's tool permission prompt is the only confirmation step.
+
+---
+
 ## Widget overview
 
 | Tool | Widget type |
@@ -199,6 +241,7 @@ Restart Claude Code to reload the server.
 | Snapshots (list/create/rollback/delete) | `VM.Snapshot` on the VM |
 | Task log | `Sys.Audit` on the node |
 | Create API token | `Sys.Modify` on `/` |
+| `node_shell` | `Sys.Console` on `/nodes/<node>`, held by the shell user rather than the API token |
 
 A role with `VM.Audit + VM.PowerMgmt + VM.Snapshot + Sys.Audit` covers everything except token creation and VM deletion.
 
@@ -215,6 +258,18 @@ The token/user lacks the required privilege for that operation. Check the permis
 
 **TLS errors**
 Set `"insecure": true` in `~/.mcp-proxmox/config.json` if Proxmox uses a self-signed certificate.
+
+**`node_shell` is missing**
+Check the server's stderr for `node_shell disabled: ...`. Without a `shell` block, `node_shell` exists only when `auth` is the `root@pam` password.
+
+**`node_shell` fails with `rejected the node_shell login`**
+Proxmox returned 401 for the shell user's ticket request. Check `shell.password`, and `shell.totp` if that user has 2FA.
+
+**`node_shell` fails with `Login incorrect`**
+The ticket worked but the Linux account differs on the target node. Create the same account and password on every node you target.
+
+**`node_shell` fails in phase `awaiting_shell`**
+No shell answered within 20 seconds. A shell profile that starts `tmux` or `screen` blocks the call. Remote nodes add an SSH hop from the API host that must also succeed.
 
 **TOTP rejected**
 Make sure the base32 secret in config matches your authenticator app exactly. Clock skew of more than 30 seconds will cause failures.

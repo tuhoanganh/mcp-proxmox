@@ -26,6 +26,8 @@ Stdio MCP server that exposes Proxmox VE cluster management as tools, most of wh
 
 **Config (`src/config.ts`):** single JSON file at `~/.mcp-proxmox/config.json`. The server exits at startup if it's missing.
 
+**Node shell (`src/node-shell.ts`, `src/tools/shell.ts`):** `node_shell` runs a command on a node through `POST /nodes/{node}/termproxy` plus the `vncwebsocket` WebSocket. `ProxmoxClient.nodeShell` owns HTTP, TLS and the shell identity's own password ticket (PVE 8 rejects API tokens for termproxy). `runShellSession` in `node-shell.ts` is a phase state machine with a deadline per phase and no HTTP or auth knowledge. Config parsing lives in `parseShellIdentity` (`src/config.ts`), which disables the tool with one stderr line instead of stopping the server. `node_shell` is a plain tool with `destructiveHint`, not a widget plus `_execute` pair, because a model can call an `_execute` tool directly, so a widget would gate nothing. `scripts/verify-node-shell.mjs` is the live check against a real cluster. It needs credentials and is not part of `npm test`.
+
 ## Conventions
 
 - ESM only (`"type": "module"`, `NodeNext` resolution). Use `.js` extensions in relative imports even though sources are `.ts`.

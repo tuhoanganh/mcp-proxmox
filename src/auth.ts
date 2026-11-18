@@ -3,6 +3,16 @@ import { authenticator } from "otplib";
 import https from "node:https";
 import type { AuthConfig } from "./config.js";
 
+export class TotpRequiredError extends Error {
+  constructor() {
+    super(
+      "Proxmox requires TOTP but no totp secret is configured. " +
+        "Run npx -y -p mcp-proxmox mcp-proxmox-setup to add your TOTP secret."
+    );
+    this.name = "TotpRequiredError";
+  }
+}
+
 export interface Session {
   /** For password auth: PVEAuthCookie value */
   ticket?: string;
@@ -46,12 +56,7 @@ export async function createSession(
   }
 
   // Step 2: TFA challenge — generate TOTP
-  if (!auth.totp) {
-    throw new Error(
-      "Proxmox requires TOTP but no totp secret is configured. " +
-        "Run npx -y -p mcp-proxmox mcp-proxmox-setup to add your TOTP secret."
-    );
-  }
+  if (!auth.totp) throw new TotpRequiredError();
   const code = authenticator.generate(auth.totp);
 
   const resp2 = await axios.post(

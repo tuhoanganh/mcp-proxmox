@@ -1,29 +1,14 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import https from "node:https";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { ProxmoxClient } from "../dist/proxmox.js";
+import { startTlsServer } from "./tls-server.mjs";
 
-process.env.NO_PROXY = "127.0.0.1";
-process.env.no_proxy = "127.0.0.1";
-
-let dir;
-let server;
-let port;
+let pve;
 let ticketRequests = 0;
 let versionCookies = [];
 
 before(async () => {
-  dir = mkdtempSync(join(tmpdir(), "mcp-proxmox-test-"));
-  execFileSync(
-    "openssl",
-    ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, "k.pem"), "-out", join(dir, "c.pem"), "-subj", "/CN=127.0.0.1", "-days", "1"],
-    { stdio: "ignore" }
-  );
-  server = https.createServer({ key: readFileSync(join(dir, "k.pem")), cert: readFileSync(join(dir, "c.pem")) }, (req, res) => {
+  pve = await startTlsServer((req, res) => {
     res.setHeader("Content-Type", "application/json");
     if (req.method === "POST" && req.url === "/api2/json/access/ticket") {
       ticketRequests++;
@@ -36,17 +21,12 @@ before(async () => {
       res.end("{}");
     }
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  port = server.address().port;
 });
 
-after(() => {
-  server.close();
-  rmSync(dir, { recursive: true, force: true });
-});
+after(() => pve.close());
 
 const passwordClient = () =>
-  new ProxmoxClient({ host: "127.0.0.1", port, insecure: true, auth: { type: "password", username: "u@pam", password: "pw" } });
+  new ProxmoxClient({ host: "127.0.0.1", port: pve.port, insecure: true, auth: { type: "password", username: "u@pam", password: "pw" } });
 
 test("a cached password ticket is reused until it expires, then replaced", async () => {
   ticketRequests = 0;
@@ -77,7 +57,7 @@ test("concurrent calls on an expired session share one login", async () => {
 
 test("API token sessions never need a ticket request", async () => {
   ticketRequests = 0;
-  const client = new ProxmoxClient({ host: "127.0.0.1", port, insecure: true, auth: { type: "apitoken", token: "u@pam!t=secret" } });
+  const client = new ProxmoxClient({ host: "127.0.0.1", port: pve.port, insecure: true, auth: { type: "apitoken", token: "u@pam!t=secret" } });
   await client.getVersion();
   assert.equal(client.mainSession.current().expiresAt, Infinity);
   assert.equal(ticketRequests, 0);
