@@ -140,16 +140,40 @@ describe("readiness and login matching", () => {
 });
 
 describe("wrapper", () => {
-  test("types one eval line whose payload carries no literal markers", () => {
-    const line = commandLine("echo 'hi' \"$HOME\" !x", NONCE, 30);
-    assert.match(line, /^eval "\$\(printf %s '[A-Za-z0-9+/=]+' \| base64 -d\)"\n$/);
-    for (const marker of ["MCPB", "MCPE", "MCPRDY"]) assert.ok(!line.includes(marker));
-    const wrapper = decodeWrapper(line);
+  test("types short lines that reassemble into the wrapper with no literal markers", () => {
+    const command = "echo 'hi' \"$HOME\" !x";
+    const typed = commandLine(command, NONCE, 30);
+    for (const marker of ["MCPB", "MCPE", "MCPRDY"]) assert.ok(!typed.includes(marker));
+    const wrapper = decodeWrapper(typed);
+    assert.equal(wrapper, buildWrapper(command, NONCE, 30));
     for (const marker of [`MCPB_${NONCE}`, `MCPE_${NONCE}`, `MCPRDY_${NONCE}`]) {
       assert.ok(!wrapper.includes(marker), marker);
     }
-    assert.ok(wrapper.includes(b64("echo 'hi' \"$HOME\" !x")));
+    assert.ok(wrapper.includes(b64(command)));
+    const lines = typed.split("\n");
+    assert.equal(lines[0], "__in=$(mktemp /tmp/mcp-shell-in.XXXXXX)");
+    assert.equal(lines.at(-2), 'eval "$(base64 -d "$__in"; rm -f "$__in")"');
+    assert.equal(lines.at(-1), "");
   });
+
+  for (const sudoPassword of [undefined, "s3cret pass"]) {
+    test(`an 8192-byte multi-byte command is typed in lines of at most 1024 bytes ${sudoPassword ? "with" : "without"} sudo`, () => {
+      const command = "é€x".repeat(1365) + "ab";
+      assert.equal(Buffer.byteLength(command), 8192);
+      assert.ok(command.length < 8192);
+      const typed = commandLine(command, NONCE, 30, sudoPassword);
+      assert.ok(typed.endsWith("\n"));
+      const lines = typed.slice(0, -1).split("\n");
+      const longest = Math.max(...lines.map((l) => Buffer.byteLength(l + "\n")));
+      assert.ok(longest <= 1024, `longest line ${longest}`);
+      const wrapper = buildWrapper(command, NONCE, 30, sudoPassword);
+      assert.equal(lines.length, 2 + Math.ceil(b64(wrapper).length / 1000));
+      assert.equal(decodeWrapper(typed), wrapper);
+      for (const marker of [`MCPB_${NONCE}`, `MCPE_${NONCE}`, `MCPRDY_${NONCE}`]) {
+        assert.ok(!typed.includes(marker), marker);
+      }
+    });
+  }
 
   test("a root identity runs the command under timeout -k 5 with no sudo", () => {
     const wrapper = decodeWrapper(commandLine("true", NONCE, 42));
@@ -195,14 +219,14 @@ describe("wrapper run by a real bash", () => {
     chmodSync(join(dir, name), 0o755);
   };
   if (!gnuTools) {
-    shim("base64", 'if [ "$1" = "-w0" ]; then shift; /usr/bin/base64 "$@" | tr -d "\\n"; else exec /usr/bin/base64 "$@"; fi');
+    shim("base64", 'if [ "$1" = "-w0" ]; then shift; /usr/bin/base64 "$@" | tr -d "\\n"; elif [ "$1" = "-d" ] && [ -n "$2" ]; then exec /usr/bin/base64 -D -i "$2"; else exec /usr/bin/base64 "$@"; fi');
     shim("stat", 'if [ "$1" = "-c" ]; then exec /usr/bin/stat -f %z "$3"; fi; exec /usr/bin/stat "$@"');
     shim("timeout", "shift 3; exec \"$@\"");
   }
 
   const run = (command, sudoPassword) => {
-    const line = commandLine(command, NONCE, 30, sudoPassword);
-    const r = spawnSync("bash", ["-c", line], {
+    const r = spawnSync("bash", [], {
+      input: commandLine(command, NONCE, 30, sudoPassword),
       env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
       encoding: "latin1",
     });
@@ -247,6 +271,17 @@ describe("wrapper run by a real bash", () => {
     const r = run("cat; echo done");
     assert.equal(r.parsed.stdout, "done\n");
     assert.equal(count(), before);
+  });
+
+  test("a multi-chunk command reassembles end to end and removes the typed-input file", () => {
+    const countIn = () =>
+      Number(spawnSync("sh", ["-c", "ls /tmp/mcp-shell-in.* 2>/dev/null | wc -l"], { encoding: "utf8" }).stdout.trim());
+    const before = countIn();
+    const text = "é€x".repeat(1500);
+    const r = run(`echo '${text}' | wc -c`);
+    assert.equal(r.parsed.exitCode, 0);
+    assert.equal(r.parsed.stdout.trim(), String(Buffer.byteLength(text) + 1));
+    assert.equal(countIn(), before);
   });
 
   test("cleanup", () => rmSync(dir, { recursive: true, force: true }));
@@ -332,7 +367,7 @@ describe("runShellSession", () => {
     const r = await drive(start(rootIdentity));
     assert.deepEqual(r, { exitCode: 0, stdout: "hello\n", stderr: "", stdoutBytes: 6, stderrBytes: 0, upid: ticket.upid });
     assert.equal(sock.sent[0], `root@pam:${ticket.ticket}\n`);
-    assert.equal(sock.sent.filter((f) => frameText(f).startsWith("eval ")).length, 1);
+    assert.equal(sock.sent.filter((f) => frameText(f).startsWith("__in=$(mktemp")).length, 1);
     assert.deepEqual(sock.closedWith, [1000]);
   });
 
@@ -374,7 +409,7 @@ describe("runShellSession", () => {
     assert.ok(typed.includes("alice\n"));
     assert.ok(typed.includes("alicepw\n"));
     assert.ok(typed.indexOf("alice\n") < typed.indexOf("alicepw\n"));
-    const eval_ = typed.find((t) => t.startsWith("eval "));
+    const eval_ = typed.find((t) => t.startsWith("__in=$(mktemp"));
     assert.ok(decodeWrapper(eval_).includes("sudo -n timeout -k 5 60"));
     assert.ok(!eval_.includes("alicepw"));
   });
@@ -382,7 +417,7 @@ describe("runShellSession", () => {
   test("a linux user with sudo off runs the command directly", async () => {
     fakeNode(sock, { identity: linuxIdentity(false), execute: () => ({ rc: 0, out: "alice\n", err: "" }) });
     await drive(start(linuxIdentity(false), "id -un"));
-    const eval_ = sock.sent.map(frameText).find((t) => t.startsWith("eval "));
+    const eval_ = sock.sent.map(frameText).find((t) => t.startsWith("__in=$(mktemp"));
     assert.ok(!decodeWrapper(eval_).includes("sudo"));
   });
 
@@ -396,7 +431,7 @@ describe("runShellSession", () => {
       return true;
     });
     assert.equal(state.passwordAttempts, 1);
-    assert.equal(sock.sent.filter((f) => frameText(f).startsWith("eval ")).length, 0);
+    assert.equal(sock.sent.filter((f) => frameText(f).startsWith("__in=$(mktemp")).length, 0);
     assert.deepEqual(sock.closedWith, [1000]);
   });
 
@@ -423,14 +458,14 @@ describe("runShellSession", () => {
     const pings = () => sock.sent.filter((f) => f === "2").length;
     fakeNode(sock, { identity: linuxIdentity(), execute: () => ({ rc: 0, out: "", err: "" }) });
     sock.onSend = ((inner) => (data) => {
-      if (frameText(data).startsWith("eval ")) return;
+      if (frameText(data).startsWith("__in=$(mktemp")) return;
       inner(data);
     })(sock.onSend);
     const settled = start(linuxIdentity(), "sleep 99", 60).then(
       () => null,
       (e) => e
     );
-    for (let i = 0; i < 50 && !sock.sent.some((f) => frameText(f).startsWith("eval ")); i++) {
+    for (let i = 0; i < 50 && !sock.sent.some((f) => frameText(f).startsWith("__in=$(mktemp")); i++) {
       await tick();
       mock.timers.tick(500);
     }

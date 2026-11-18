@@ -3,11 +3,15 @@ export const b64 = (s) => Buffer.from(s).toString("base64");
 export const result = (nonce, rc, out, err, outBytes = Buffer.byteLength(out), errBytes = Buffer.byteLength(err)) =>
   `MCPB_${nonce}:${rc}:${outBytes}:${errBytes}:${b64(out)}:${b64(err)}:MCPE_${nonce}`;
 
-export const decodeWrapper = (line) => Buffer.from(/printf %s '([^']+)'/.exec(line)[1], "base64").toString("utf8");
+export const decodeWrapper = (typed) =>
+  Buffer.from(
+    [...typed.matchAll(/^printf %s '([^']+)' >>"\$__in"$/gm)].map((m) => m[1]).join(""),
+    "base64"
+  ).toString("utf8");
 
 export const frameText = (frame) => frame.replace(/^0:\d+:/, "");
 
-export const isCommandFrame = (frame) => frameText(frame).startsWith("eval ");
+export const isCommandFrame = (frame) => frameText(frame).startsWith("__in=$(mktemp");
 
 export function createNodeBehavior({ identity, execute, ignoreProbes = 0, loginOk = true }) {
   const state = { probes: 0, commands: 0, passwordAttempts: 0, step: "auth" };
@@ -37,7 +41,7 @@ export function createNodeBehavior({ identity, execute, ignoreProbes = 0, loginO
       state.probes++;
       const nonce = /MCPRDY (\w+)/.exec(text)[1];
       reply(state.probes > ignoreProbes ? `${text}\rMCPRDY_${nonce}\r\n${prompt}` : "");
-    } else if (text.startsWith('eval "$(printf %s')) {
+    } else if (text.startsWith("__in=$(mktemp")) {
       state.commands++;
       const wrapper = decodeWrapper(text);
       const nonce = /MCPB (\w+)/.exec(wrapper)[1];

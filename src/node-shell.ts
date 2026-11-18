@@ -86,9 +86,17 @@ export function buildWrapper(command: string, nonce: string, timeoutS: number, s
   );
 }
 
+// Linux n_tty keeps at most 4095 bytes of one canonical-mode line, so each typed line stays far below it.
+const TYPED_CHUNK_CHARS = 1000;
+
 export function commandLine(command: string, nonce: string, timeoutS: number, sudoPassword?: string): string {
-  const wrapper = buildWrapper(command, nonce, timeoutS, sudoPassword);
-  return `eval "$(printf %s '${b64(wrapper)}' | base64 -d)"\n`;
+  const payload = b64(buildWrapper(command, nonce, timeoutS, sudoPassword));
+  const lines = ["__in=$(mktemp /tmp/mcp-shell-in.XXXXXX)"];
+  for (let i = 0; i < payload.length; i += TYPED_CHUNK_CHARS) {
+    lines.push(`printf %s '${payload.slice(i, i + TYPED_CHUNK_CHARS)}' >>"$__in"`);
+  }
+  lines.push(`eval "$(base64 -d "$__in"; rm -f "$__in")"`);
+  return lines.join("\n") + "\n";
 }
 
 export interface ParsedResult {
