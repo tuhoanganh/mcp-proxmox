@@ -110,7 +110,8 @@ Configure it with any one of:
      Optional node_shell identity (a "shell" key next to "auth"; a root@pam password in "auth" already enables it):
      "shell":{"user":"root@pam","password":"<root password>"}
      "shell":{"user":"<linux username>","password":"<its Linux password>","sudo":true}
-     (add "totp":"<base32 secret>" inside "shell" if that user has 2FA; only the pam realm is supported)
+     (add "totp":"<base32 secret>" inside "shell" if that user has 2FA; without it node_shell asks for the code
+     with a form; only the pam realm is supported)
 
 Then restart Claude Code.`;
 

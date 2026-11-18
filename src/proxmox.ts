@@ -2,7 +2,14 @@ import axios, { AxiosInstance, AxiosError } from "axios";
 import https from "node:https";
 import WebSocket from "ws";
 import { parseShellIdentity, type ProxmoxConfig, type ShellIdentity, type ShellIdentityResult } from "./config.js";
-import { SessionCache, TotpRequiredError, sessionHeaders } from "./auth.js";
+import {
+  SessionCache,
+  TotpPromptCancelledError,
+  TotpRequiredError,
+  failedAfterCodeSent,
+  sessionHeaders,
+  type AskTotpCode,
+} from "./auth.js";
 import { runShellSession, type ShellResult, type TermProxyTicket } from "./node-shell.js";
 
 export interface VMInfo {
@@ -623,10 +630,21 @@ export class ProxmoxClient {
 
   private shellLoginError(e: unknown, user: string): Error {
     if (e instanceof TotpRequiredError) {
-      return new Error(`Proxmox requires a TOTP code for ${user}. Add shell.totp (the base32 secret) to config.json.`);
+      return new Error(
+        `Proxmox requires a TOTP code for ${user}. Add shell.totp (the base32 secret) to config.json, or use a client that can show forms.`
+      );
+    }
+    if (e instanceof TotpPromptCancelledError) {
+      return new Error("node_shell did not log in because the TOTP prompt was cancelled or the code was not 6 digits.");
     }
     if (!(e instanceof AxiosError)) return e instanceof Error ? e : new Error(String(e));
     const status = e.response?.status;
+    if (status === 401 && failedAfterCodeSent(e)) {
+      return new Error(
+        `Proxmox rejected the node_shell login for ${user} (HTTP 401) after the TOTP code was sent. ` +
+          "Check the password or try a fresh code."
+      );
+    }
     return new Error(
       status === 401
         ? `Proxmox rejected the node_shell login for ${user} (HTTP 401). Check shell.password and shell.totp in config.json.`
@@ -634,13 +652,18 @@ export class ProxmoxClient {
     );
   }
 
-  async nodeShell(node: string, command: string, timeoutS: number): Promise<ShellResult> {
+  async nodeShell(
+    node: string,
+    command: string,
+    timeoutS: number,
+    opts: { askTotpCode?: AskTotpCode } = {}
+  ): Promise<ShellResult> {
     if (this.shell.status !== "enabled") throw new Error("node_shell is not configured.");
     const { identity } = this.shell;
 
     let session;
     try {
-      session = await this.shellSessionCache(identity).ensure();
+      session = await this.shellSessionCache(identity).ensure(opts.askTotpCode);
     } catch (e) {
       throw this.shellLoginError(e, identity.auth.username);
     }

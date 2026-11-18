@@ -8,12 +8,16 @@ import { ProxmoxClient } from "../dist/proxmox.js";
 import { registerShellTools } from "../dist/tools/shell.js";
 
 const includeWrongPassword = process.argv.includes("--include-wrong-password");
+const totpFlag = process.argv.indexOf("--totp-command");
+const totpCommand = totpFlag < 0 ? undefined : process.argv[totpFlag + 1];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function refuse(message) {
   process.stderr.write(`verify-node-shell: ${message}\n`);
   process.exit(2);
 }
+
+if (totpFlag >= 0 && !totpCommand) refuse("--totp-command needs a command that prints the current 6-digit code.");
 
 let config;
 try {
@@ -83,7 +87,24 @@ async function shellCase(name, run, verify) {
 const nodes = (await client.listNodes()).filter((n) => n.status === "online").map((n) => n.node).sort();
 if (nodes.length === 0) refuse("the cluster reports no online node.");
 
-const exec = (c, node, command, timeoutS = 30) => c.nodeShell(node, command, timeoutS);
+let lastCode;
+async function askTotpCode() {
+  const deadline = Date.now() + 35_000;
+  for (;;) {
+    const run = spawnSync(totpCommand, { shell: true, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+    assert.equal(run.status, 0, `--totp-command exited with status ${run.status}`);
+    const code = run.stdout.trim();
+    assert.match(code, /^\d{6}$/, "--totp-command did not print a 6-digit code");
+    if (code !== lastCode || Date.now() >= deadline) {
+      lastCode = code;
+      return code;
+    }
+    await sleep(1000);
+  }
+}
+
+const exec = (c, node, command, timeoutS = 30) =>
+  c.nodeShell(node, command, timeoutS, { askTotpCode: totpCommand ? askTotpCode : undefined });
 
 await shellCase(
   `echo hello on ${nodes[0]}`,
@@ -190,7 +211,11 @@ await check("5 parallel calls all pass, each on its own termproxy port", async (
 });
 
 if (identity.kind === "linux") {
-  const withSudo = (sudo) => new ProxmoxClient({ ...config, shell: { ...config.shell, sudo } });
+  const withSudo = (sudo) => {
+    const extra = new ProxmoxClient({ ...config, shell: { ...config.shell, sudo } });
+    extra.shellSession = client.shellSession;
+    return extra;
+  };
   await shellCase(
     "id -un with sudo on is root",
     () => exec(withSudo(true), apiNode, "id -un"),

@@ -81,7 +81,7 @@ test("a successful call returns exit code, stdout, stderr and the task, with the
   const r = await mcp.callTool({ name: "node_shell", arguments: { node: "pve1", command: "echo hello" } });
   assert.equal(r.isError, false);
   assert.equal(r.content[0].text, "Exit code: 0\nstdout:\nhello\n\nstderr:\n\nTask: UPID:pve1:1:2:3:vncshell::root@pam:");
-  assert.deepEqual(calls, [["pve1", "echo hello", 60]]);
+  assert.deepEqual(calls.map((c) => c.slice(0, 3)), [["pve1", "echo hello", 60]]);
 });
 
 test("a non-zero exit is an error and truncation is stated", async () => {
