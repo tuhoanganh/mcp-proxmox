@@ -16,7 +16,8 @@
     "start": "node dist/server.js",
     "setup": "node dist/setup.js",
     "dev": "tsc --watch",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "test": "tsc && node --test test/*.test.mjs"
   },
   "engines": {
     "node": ">=18"

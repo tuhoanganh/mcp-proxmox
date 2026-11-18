@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run dev` — `tsc --watch` for iterative work.
 - `npm run setup` / `node dist/setup.js` — interactive wizard that writes `~/.mcp-proxmox/config.json` (mode 600).
 - `npm start` — run the stdio MCP server directly (normally Claude Code launches it).
-- After editing sources: rebuild, then restart Claude Code to reload the server. There is no test suite.
+- After editing sources: rebuild, then restart Claude Code to reload the server. `npm test` builds, then runs the `node:test` suites in `test/` against `dist/`. They cover the pure parts and a local fake Proxmox server, and never contact a real cluster.
 
 ## Architecture
 

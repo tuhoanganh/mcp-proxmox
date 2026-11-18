@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
 import https from "node:https";
 import type { ProxmoxConfig } from "./config.js";
-import { createSession, sessionHeaders, type Session } from "./auth.js";
+import { SessionCache, sessionHeaders } from "./auth.js";
 
 export interface VMInfo {
   vmid: number;
@@ -130,7 +130,7 @@ function sleep(ms: number): Promise<void> {
 
 export class ProxmoxClient {
   private http: AxiosInstance;
-  private session: Session | null = null;
+  private mainSession: SessionCache;
   private baseUrl: string;
   private config: ProxmoxConfig;
 
@@ -139,16 +139,15 @@ export class ProxmoxClient {
     this.baseUrl = `https://${config.host}:${config.port}/api2/json`;
     const agent = new https.Agent({ rejectUnauthorized: !(config.insecure ?? true) });
     this.http = axios.create({ baseURL: this.baseUrl, httpsAgent: agent });
+    this.mainSession = new SessionCache(this.baseUrl, config.auth, config.insecure ?? true);
   }
 
   async ensureSession(): Promise<void> {
-    if (this.session) return;
-    this.session = await createSession(this.baseUrl, this.config.auth, this.config.insecure ?? true);
+    await this.mainSession.ensure();
   }
 
   private headers(): Record<string, string> {
-    if (!this.session) throw new Error("Not authenticated");
-    return sessionHeaders(this.session);
+    return sessionHeaders(this.mainSession.current());
   }
 
   private handleError(err: unknown): never {
@@ -584,9 +583,9 @@ export class ProxmoxClient {
   ): Promise<void> {
     const timeoutMs = opts.timeoutMs ?? 5 * 60 * 1000;
     const pollMs = opts.pollMs ?? 2000;
-    await this.ensureSession();
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
+      await this.ensureSession();
       let data: TaskStatus = { status: "running" };
       try {
         const r = await this.http.get(`/nodes/${node}/tasks/${upid}/status`, {
