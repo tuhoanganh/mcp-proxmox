@@ -1,7 +1,9 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
 import https from "node:https";
-import type { ProxmoxConfig } from "./config.js";
+import WebSocket from "ws";
+import { parseShellIdentity, type ProxmoxConfig, type ShellIdentity, type ShellIdentityResult } from "./config.js";
 import { SessionCache, sessionHeaders } from "./auth.js";
+import { runShellSession, type ShellResult, type TermProxyTicket } from "./node-shell.js";
 
 export interface VMInfo {
   vmid: number;
@@ -131,15 +133,19 @@ function sleep(ms: number): Promise<void> {
 export class ProxmoxClient {
   private http: AxiosInstance;
   private mainSession: SessionCache;
+  private shellSession: SessionCache | null = null;
   private baseUrl: string;
   private config: ProxmoxConfig;
+  private httpsAgent: https.Agent;
+  readonly shell: ShellIdentityResult;
 
   constructor(config: ProxmoxConfig) {
     this.config = config;
     this.baseUrl = `https://${config.host}:${config.port}/api2/json`;
-    const agent = new https.Agent({ rejectUnauthorized: !(config.insecure ?? true) });
-    this.http = axios.create({ baseURL: this.baseUrl, httpsAgent: agent });
+    this.httpsAgent = new https.Agent({ rejectUnauthorized: !(config.insecure ?? true) });
+    this.http = axios.create({ baseURL: this.baseUrl, httpsAgent: this.httpsAgent });
     this.mainSession = new SessionCache(this.baseUrl, config.auth, config.insecure ?? true);
+    this.shell = parseShellIdentity(config);
   }
 
   async ensureSession(): Promise<void> {
@@ -576,6 +582,16 @@ export class ProxmoxClient {
     }
   }
 
+  async getTaskStatus(node: string, upid: string): Promise<TaskStatus> {
+    await this.ensureSession();
+    try {
+      const r = await this.http.get(`/nodes/${node}/tasks/${upid}/status`, { headers: this.headers() });
+      return r.data.data as TaskStatus;
+    } catch (e) {
+      this.handleError(e);
+    }
+  }
+
   async waitForTask(
     node: string,
     upid: string,
@@ -585,16 +601,7 @@ export class ProxmoxClient {
     const pollMs = opts.pollMs ?? 2000;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      await this.ensureSession();
-      let data: TaskStatus = { status: "running" };
-      try {
-        const r = await this.http.get(`/nodes/${node}/tasks/${upid}/status`, {
-          headers: this.headers(),
-        });
-        data = r.data.data as TaskStatus;
-      } catch (e) {
-        this.handleError(e);
-      }
+      const data = await this.getTaskStatus(node, upid);
       if (data.status === "stopped") {
         if (data.exitstatus !== "OK") {
           throw new Error(`Task ${upid} on ${node} failed: ${data.exitstatus}`);
@@ -606,6 +613,58 @@ export class ProxmoxClient {
     throw new Error(
       `Timed out after ${timeoutMs}ms waiting for task ${upid} on ${node} (the task may still be running server-side)`
     );
+  }
+
+  private shellSessionCache(identity: ShellIdentity): SessionCache {
+    if (identity.auth === this.config.auth) return this.mainSession;
+    this.shellSession ??= new SessionCache(this.baseUrl, identity.auth, this.config.insecure ?? true);
+    return this.shellSession;
+  }
+
+  private shellLoginError(e: unknown, user: string): Error {
+    if (!(e instanceof AxiosError)) return e instanceof Error ? e : new Error(String(e));
+    const status = e.response?.status;
+    return new Error(
+      status === 401
+        ? `Proxmox rejected the node_shell login for ${user} (HTTP 401). Check shell.password and shell.totp in config.json.`
+        : `Could not log in as ${user} for node_shell: ${status ? `HTTP ${status}` : e.message}`
+    );
+  }
+
+  async nodeShell(node: string, command: string, timeoutS: number): Promise<ShellResult> {
+    if (this.shell.status !== "enabled") throw new Error("node_shell is not configured.");
+    const { identity } = this.shell;
+
+    let session;
+    try {
+      session = await this.shellSessionCache(identity).ensure();
+    } catch (e) {
+      throw this.shellLoginError(e, identity.auth.username);
+    }
+    const headers = sessionHeaders(session);
+    const nodePath = encodeURIComponent(node);
+
+    let ticket: TermProxyTicket;
+    try {
+      const r = await this.http.post(`/nodes/${nodePath}/termproxy`, {}, { headers });
+      const d = r.data.data;
+      ticket = { user: d.user, ticket: d.ticket, port: Number(d.port), upid: d.upid };
+    } catch (e) {
+      if (e instanceof AxiosError && e.response?.status === 403) {
+        throw new Error(`Permission denied: ${identity.auth.username} needs Sys.Console on /nodes/${node} to open a terminal.`);
+      }
+      this.handleError(e);
+    }
+
+    const url =
+      `wss://${this.config.host}:${this.config.port}/api2/json/nodes/${nodePath}/vncwebsocket` +
+      `?port=${ticket.port}&vncticket=${encodeURIComponent(ticket.ticket)}`;
+    const ws = new WebSocket(url, ["binary"], {
+      headers,
+      agent: this.httpsAgent,
+      rejectUnauthorized: !(this.config.insecure ?? true),
+    });
+    return runShellSession(ws, ticket, command, { node, timeoutS, identity });
   }
 
   async waitForGuestAgent(
